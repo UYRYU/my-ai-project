@@ -1,11 +1,13 @@
-"""Polymarket市場取得の動作確認スクリプト.
+#!/usr/bin/env python3
+"""Polymarket 市場取得の動作確認スクリプト.
 
-1. Gamma API からアクティブなイベント/市場を取得
-2. BTC関連の短期市場を抽出
-3. 全取得市場のうちBTC関連も一覧表示
-4. 各市場のtoken_id, question, slug等を見やすく出力
+Step 1: Gamma API /events でアクティブイベント取得
+Step 2: CLOB API /markets でカーソルページネーション取得
+Step 3: BTC 短期市場をフィルタリング
+Step 4: CLOB API /book で板情報取得テスト
 
 Usage:
+    cd polymarket_bot
     python scripts/check_markets.py          # ライブAPI接続
     python scripts/check_markets.py --demo   # デモデータで動作確認
 """
@@ -18,116 +20,87 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config
 from src.market_discovery import BTC_KEYWORDS, SHORT_TERM_KEYWORDS, MarketDiscovery
+from src.models import OrderBookLevel, OrderBookSnapshot
 
-DIVIDER = "=" * 80
-THIN_DIVIDER = "-" * 80
+DIV = "=" * 78
+THIN = "-" * 78
 
-# ── Demo data: realistic mock events ──
-DEMO_EVENTS: list[dict] = [
-    {
-        "id": "evt-001",
-        "title": "Bitcoin 5-Minute Price Markets",
-        "slug": "bitcoin-5-minute-price",
-        "active": True,
-        "closed": False,
-        "markets": [
+# ────────────────────────────────────────────────
+#  Demo fixtures
+# ────────────────────────────────────────────────
+DEMO_CLOB_PAGES: list[tuple[list[dict], str]] = [
+    (
+        [
             {
-                "condition_id": "0xabc123def456789000000000000000000000000000000000000000000000001",
+                "condition_id": "0xabc001",
                 "question": "Will Bitcoin be above $100,000 at 12:05 PM ET? (5-minute market)",
                 "market_slug": "btc-above-100k-5min-1205",
                 "active": True,
-                "closed": False,
+                "end_date_iso": "2026-03-24T16:05:00Z",
                 "volume": "52340.50",
                 "tokens": [
-                    {"token_id": "71321045009812370000000000000000000000000000000000000000000001", "outcome": "Yes", "price": "0.62"},
-                    {"token_id": "71321045009812370000000000000000000000000000000000000000000002", "outcome": "No", "price": "0.40"},
+                    {"token_id": "71321045000001", "outcome": "Yes", "price": "0.62"},
+                    {"token_id": "71321045000002", "outcome": "No",  "price": "0.40"},
                 ],
             },
             {
-                "condition_id": "0xabc123def456789000000000000000000000000000000000000000000000002",
+                "condition_id": "0xabc002",
                 "question": "Will Bitcoin be above $100,500 at 12:05 PM ET? (5-minute market)",
                 "market_slug": "btc-above-100500-5min-1205",
                 "active": True,
-                "closed": False,
+                "end_date_iso": "2026-03-24T16:05:00Z",
                 "volume": "31200.00",
                 "tokens": [
-                    {"token_id": "71321045009812370000000000000000000000000000000000000000000003", "outcome": "Yes", "price": "0.35"},
-                    {"token_id": "71321045009812370000000000000000000000000000000000000000000004", "outcome": "No", "price": "0.67"},
+                    {"token_id": "71321045000003", "outcome": "Yes", "price": "0.35"},
+                    {"token_id": "71321045000004", "outcome": "No",  "price": "0.67"},
                 ],
             },
-        ],
-    },
-    {
-        "id": "evt-002",
-        "title": "Bitcoin 1-Minute Price Markets",
-        "slug": "bitcoin-1-minute-price",
-        "active": True,
-        "closed": False,
-        "markets": [
             {
-                "condition_id": "0xdef789abc123456000000000000000000000000000000000000000000000003",
+                "condition_id": "0xdef003",
                 "question": "Will BTC go up in the next 1-minute candle?",
                 "market_slug": "btc-1min-up-candle",
                 "active": True,
-                "closed": False,
+                "end_date_iso": "2026-03-24T16:01:00Z",
                 "volume": "8750.25",
                 "tokens": [
-                    {"token_id": "88432045009812370000000000000000000000000000000000000000000001", "outcome": "Yes", "price": "0.51"},
-                    {"token_id": "88432045009812370000000000000000000000000000000000000000000002", "outcome": "No", "price": "0.50"},
+                    {"token_id": "88432045000001", "outcome": "Yes", "price": "0.51"},
+                    {"token_id": "88432045000002", "outcome": "No",  "price": "0.50"},
                 ],
             },
-        ],
-    },
-    {
-        "id": "evt-003",
-        "title": "US Presidential Election 2028",
-        "slug": "us-presidential-election-2028",
-        "active": True,
-        "closed": False,
-        "markets": [
             {
-                "condition_id": "0x999888777666555000000000000000000000000000000000000000000000004",
+                "condition_id": "0x999004",
                 "question": "Will the Democratic nominee win the 2028 presidential election?",
                 "market_slug": "dem-nominee-win-2028",
                 "active": True,
-                "closed": False,
+                "end_date_iso": "2028-11-05T00:00:00Z",
                 "volume": "1250000.00",
                 "tokens": [
-                    {"token_id": "99555045009812370000000000000000000000000000000000000000000001", "outcome": "Yes", "price": "0.45"},
-                    {"token_id": "99555045009812370000000000000000000000000000000000000000000002", "outcome": "No", "price": "0.56"},
+                    {"token_id": "99555045000001", "outcome": "Yes", "price": "0.45"},
+                    {"token_id": "99555045000002", "outcome": "No",  "price": "0.56"},
                 ],
             },
-        ],
-    },
-    {
-        "id": "evt-004",
-        "title": "Bitcoin Year-End Price",
-        "slug": "bitcoin-year-end-price",
-        "active": True,
-        "closed": False,
-        "markets": [
             {
-                "condition_id": "0xfff111222333444000000000000000000000000000000000000000000000005",
+                "condition_id": "0xfff005",
                 "question": "Will Bitcoin be above $150,000 on December 31?",
                 "market_slug": "btc-above-150k-eoy",
                 "active": True,
-                "closed": False,
+                "end_date_iso": "2026-12-31T23:59:59Z",
                 "volume": "875000.00",
                 "tokens": [
-                    {"token_id": "66777045009812370000000000000000000000000000000000000000000001", "outcome": "Yes", "price": "0.28"},
-                    {"token_id": "66777045009812370000000000000000000000000000000000000000000002", "outcome": "No", "price": "0.73"},
+                    {"token_id": "66777045000001", "outcome": "Yes", "price": "0.28"},
+                    {"token_id": "66777045000002", "outcome": "No",  "price": "0.73"},
                 ],
             },
         ],
-    },
+        "LTE",
+    ),
 ]
 
-DEMO_ORDER_BOOK: dict = {
+DEMO_BOOK: dict = {
     "bids": [
         {"price": "0.60", "size": "250.00"},
         {"price": "0.59", "size": "500.00"},
@@ -143,252 +116,251 @@ DEMO_ORDER_BOOK: dict = {
 }
 
 
-def print_events_sample(all_events: list[dict]) -> None:
-    """Step 2: Show a few raw events as sample."""
-    print(f"\n[2/4] 最初の3イベント（生データサンプル）")
-    print(THIN_DIVIDER)
-    for i, event in enumerate(all_events[:3]):
-        markets_in_event = event.get("markets", [])
-        print(f"  Event #{i+1}")
-        print(f"    title:    {event.get('title', 'N/A')[:80]}")
-        print(f"    slug:     {event.get('slug', 'N/A')}")
-        print(f"    active:   {event.get('active')}")
-        print(f"    closed:   {event.get('closed')}")
-        print(f"    markets:  {len(markets_in_event)} 件")
-        if markets_in_event:
-            m0 = markets_in_event[0]
-            print(f"    market[0] question: {m0.get('question', 'N/A')[:70]}")
-            tokens = m0.get("tokens", [])
-            if isinstance(tokens, str):
-                tokens = json.loads(tokens)
-            for t in tokens[:2]:
-                print(f"      token: {t.get('outcome', '?')} | id={t.get('token_id', '?')[:20]}... | price={t.get('price', '?')}")
-        print()
+# ────────────────────────────────────────────────
+#  Helpers
+# ────────────────────────────────────────────────
+def _tokens(raw: list | str) -> list[dict]:
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
 
 
-def filter_btc_markets(all_events: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Step 3: Filter BTC markets."""
-    btc_markets: list[dict] = []
-    btc_all: list[dict] = []
-    for event in all_events:
-        for m in event.get("markets", []):
-            q = (m.get("question") or "").lower()
-            is_btc = any(kw in q for kw in BTC_KEYWORDS)
-            is_short = any(kw in q for kw in SHORT_TERM_KEYWORDS)
-            if is_btc:
-                btc_all.append(m)
-                if is_short:
-                    btc_markets.append(m)
-    return btc_all, btc_markets
+def is_btc(q: str) -> bool:
+    return any(kw in q for kw in BTC_KEYWORDS)
 
 
-def print_btc_markets(btc_all: list[dict], gamma_url: str) -> None:
-    """Print BTC related markets."""
-    if btc_all:
-        print(f"\n  -- BTC関連市場 全 {len(btc_all)} 件 --")
-        print(THIN_DIVIDER)
-        for i, m in enumerate(btc_all[:20]):
-            q = m.get("question", "N/A")
-            slug = m.get("market_slug", m.get("slug", "N/A"))
-            active = m.get("active")
-            closed = m.get("closed")
-            volume = m.get("volume", "N/A")
-            tokens = m.get("tokens", [])
-            if isinstance(tokens, str):
-                tokens = json.loads(tokens)
-            cond_id = m.get("condition_id", "N/A")
-
-            short_match = any(kw in q.lower() for kw in SHORT_TERM_KEYWORDS)
-            tag = " [SHORT-TERM]" if short_match else ""
-
-            print(f"\n  #{i+1}{tag}")
-            print(f"    question:     {q[:75]}")
-            print(f"    slug:         {slug}")
-            print(f"    condition_id: {cond_id[:24]}...")
-            print(f"    active: {active}  closed: {closed}  volume: {volume}")
-            for t in tokens[:2]:
-                tid = t.get("token_id", "?")
-                print(f"    token [{t.get('outcome', '?'):3}]: {tid[:24]}...  price={t.get('price', '?')}")
-
-        if len(btc_all) > 20:
-            print(f"\n  ... 他 {len(btc_all) - 20} 件省略")
-    else:
-        print("\n  *** BTC関連市場が見つかりませんでした ***")
-        print("  Polymarketに現在BTC短期市場がない可能性があります。")
-        print("  キーワードを広げるか、手動で確認してください:")
-        print(f"    {gamma_url}/events?active=true&closed=false&limit=10")
+def is_short_term(q: str) -> bool:
+    return any(kw in q for kw in SHORT_TERM_KEYWORDS)
 
 
-def find_test_token(btc_markets: list[dict], btc_all: list[dict], all_events: list[dict]) -> tuple[str | None, str]:
-    """Find a token_id for order book test."""
-    for m in (btc_markets or btc_all or []):
-        tokens = m.get("tokens", [])
-        if isinstance(tokens, str):
-            tokens = json.loads(tokens)
-        if tokens:
-            return tokens[0].get("token_id"), m.get("question", "")[:60]
+def print_market_row(idx: int, m: dict) -> None:
+    q = m.get("question", "N/A")
+    slug = m.get("market_slug", m.get("slug", "N/A"))
+    cond = m.get("condition_id", "?")
+    active = m.get("active")
+    closed = m.get("closed", False)
+    vol = m.get("volume", "0")
+    tokens = _tokens(m.get("tokens", []))
+    ql = q.lower()
+    tag = " [SHORT-TERM]" if (is_btc(ql) and is_short_term(ql)) else ""
 
-    if all_events:
-        for event in all_events:
-            for m in event.get("markets", []):
-                tokens = m.get("tokens", [])
-                if isinstance(tokens, str):
-                    tokens = json.loads(tokens)
-                if tokens:
-                    return tokens[0].get("token_id"), m.get("question", "")[:60]
-    return None, ""
+    print(f"\n  #{idx}{tag}")
+    print(f"    question:     {q[:75]}")
+    print(f"    slug:         {slug}")
+    print(f"    condition_id: {cond[:28]}{'...' if len(cond) > 28 else ''}")
+    print(f"    active={active}  closed={closed}  volume={vol}")
+    for t in tokens[:2]:
+        tid = t.get("token_id", "?")
+        print(f"    token [{t.get('outcome','?'):3}]: {tid[:28]}{'...' if len(tid)>28 else ''}  price={t.get('price','?')}")
 
 
+def print_book(book: OrderBookSnapshot) -> None:
+    print(f"    bids: {len(book.bids)} levels  asks: {len(book.asks)} levels")
+    if book.best_bid is not None:
+        print(f"    best bid : {book.best_bid:.4f}  size={book.best_bid_size:.2f}")
+    if book.best_ask is not None:
+        print(f"    best ask : {book.best_ask:.4f}  size={book.best_ask_size:.2f}")
+    if book.spread is not None:
+        print(f"    spread   : {book.spread:.4f}")
+
+
+# ────────────────────────────────────────────────
+#  Live mode
+# ────────────────────────────────────────────────
 async def run_live() -> None:
-    """Live mode: fetch from real Polymarket API."""
     config = load_config()
     discovery = MarketDiscovery(config)
 
-    print(DIVIDER)
+    print(DIV)
     print("  Polymarket 市場取得チェック [LIVE]")
-    print(f"  実行時刻: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
-    print(f"  Gamma API: {config.gamma_api}")
-    print(f"  CLOB API:  {config.clob_api}")
-    print(DIVIDER)
+    print(f"  {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    print(f"  Gamma API : {config.gamma_api}")
+    print(f"  CLOB API  : {config.clob_api}")
+    print(DIV)
 
-    # Step 1
-    print("\n[1/4] Gamma API /events からアクティブイベントを取得中...")
-    all_events = await discovery.fetch_events(offset=0, limit=100)
-    print(f"  -> 取得イベント数: {len(all_events)}")
+    # ── Step 1: Gamma API ──
+    print("\n[1/4] Gamma API /events ...")
+    events = await discovery.fetch_events(offset=0, limit=10)
+    gamma_ok = bool(events)
+    gamma_market_count = sum(len(e.get("markets", [])) for e in events)
+    print(f"  events={len(events)}  markets_in_events={gamma_market_count}  {'OK' if gamma_ok else 'FAILED (will use CLOB)'}")
 
-    if not all_events:
-        print("\n  *** イベントが0件です。API接続を確認してください。 ***")
-        print(f"  テストURL: {config.gamma_api}/events?active=true&closed=false&limit=5")
-        print(f"\n  ヒント: --demo フラグでデモデータ動作確認ができます:")
-        print(f"    python scripts/check_markets.py --demo")
+    if gamma_ok:
+        first_ev = events[0]
+        print(f"  sample event: {first_ev.get('title','?')[:60]}")
+
+    # ── Step 2: CLOB API ──
+    print("\n[2/4] CLOB API /markets (first 2 pages) ...")
+    all_clob_raw: list[dict] = []
+    cursor = "MA=="
+    for page_i in range(2):
+        page_data, cursor = await discovery.fetch_clob_markets(cursor)
+        all_clob_raw.extend(page_data)
+        print(f"  page {page_i+1}: {len(page_data)} markets  next_cursor={cursor[:12]}{'...' if len(cursor)>12 else ''}")
+        if cursor == "LTE" or not page_data:
+            break
+    clob_ok = bool(all_clob_raw)
+    print(f"  total from CLOB (sampled): {len(all_clob_raw)}  {'OK' if clob_ok else 'FAILED'}")
+
+    if not gamma_ok and not clob_ok:
+        print(f"\n  *** 両APIに接続できませんでした ***")
+        print(f"  ネットワーク/プロキシを確認してください。")
+        print(f"  デモモード: python scripts/check_markets.py --demo")
         await discovery.close()
         return
 
-    total_markets = sum(len(e.get("markets", [])) for e in all_events)
-    print(f"  -> イベント内の市場数合計: {total_markets}")
+    # ── Step 3: BTC filtering ──
+    print(f"\n[3/4] BTC短期市場を抽出 ...")
+    print(f"  BTC keywords:   {BTC_KEYWORDS}")
+    print(f"  Short keywords: {SHORT_TERM_KEYWORDS}")
 
-    # Step 2
-    print_events_sample(all_events)
+    # Collect raw markets from both sources
+    combined_raw: list[dict] = []
+    if gamma_ok:
+        for ev in events:
+            combined_raw.extend(ev.get("markets", []))
+    combined_raw.extend(all_clob_raw)
 
-    # Step 3
-    print(f"[3/4] BTC関連市場を抽出中...")
-    print(f"  BTC キーワード: {BTC_KEYWORDS}")
-    print(f"  短期キーワード: {SHORT_TERM_KEYWORDS}")
-    btc_all, btc_markets = filter_btc_markets(all_events)
-    print(f"\n  BTC関連 (全件):         {len(btc_all)} 件")
-    print(f"  BTC関連 + 短期フィルタ: {len(btc_markets)} 件")
-    print_btc_markets(btc_all, config.gamma_api)
+    # Deduplicate by condition_id
+    seen: set[str] = set()
+    unique_raw: list[dict] = []
+    for m in combined_raw:
+        cid = m.get("condition_id", "")
+        if cid and cid not in seen:
+            seen.add(cid)
+            unique_raw.append(m)
 
-    # Step 4
-    print(f"\n[4/4] CLOB API 板情報テスト...")
-    test_token, test_question = find_test_token(btc_markets, btc_all, all_events)
+    btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
+    btc_short = [m for m in btc_all if is_short_term((m.get("question") or "").lower())]
+
+    print(f"  全ユニーク市場:          {len(unique_raw)}")
+    print(f"  BTC関連:                 {len(btc_all)}")
+    print(f"  BTC関連 + 短期:          {len(btc_short)}")
+
+    display = btc_all if btc_all else unique_raw[:10]
+    label = "BTC関連市場" if btc_all else "全市場サンプル (BTC見つからず)"
+    print(f"\n  -- {label} ({len(display)} 件) --")
+    print(THIN)
+    for i, m in enumerate(display[:20], 1):
+        print_market_row(i, m)
+    if len(display) > 20:
+        print(f"\n  ... 他 {len(display)-20} 件省略")
+
+    # ── Step 4: Order book test ──
+    print(f"\n[4/4] CLOB API /book テスト ...")
+    test_token = None
+    test_q = ""
+    for m in (btc_short or btc_all or unique_raw[:5]):
+        tokens = _tokens(m.get("tokens", []))
+        if tokens and tokens[0].get("token_id"):
+            test_token = tokens[0]["token_id"]
+            test_q = (m.get("question") or "")[:60]
+            break
 
     if test_token:
-        print(f"  市場: {test_question}")
-        print(f"  token_id: {test_token[:24]}...")
+        print(f"  market:   {test_q}")
+        print(f"  token_id: {test_token[:28]}...")
         book = await discovery.fetch_order_book(test_token)
         if book.bids or book.asks:
-            print(f"  bids: {len(book.bids)} 件  asks: {len(book.asks)} 件")
-            if book.best_bid is not None:
-                print(f"  best bid: {book.best_bid:.4f} (size={book.best_bid_size:.2f})")
-            if book.best_ask is not None:
-                print(f"  best ask: {book.best_ask:.4f} (size={book.best_ask_size:.2f})")
-            if book.spread is not None:
-                print(f"  spread:   {book.spread:.4f}")
+            print_book(book)
+            book_ok = True
         else:
-            print("  -> 板情報が空です（市場がまだ流動性がない可能性）")
+            print("    -> 板データ空（流動性なし or エンドポイントエラー）")
+            book_ok = False
     else:
-        print("  テスト対象のtokenが見つかりませんでした")
+        print("  テスト対象トークンなし")
+        book_ok = False
 
     await discovery.close()
 
-    # Summary
-    print(f"\n{DIVIDER}")
-    print("  まとめ")
-    print(DIVIDER)
-    print(f"  Gamma API イベント取得:  {'OK' if all_events else 'NG'} ({len(all_events)} events)")
-    print(f"  市場数:                  {total_markets}")
-    print(f"  BTC関連:                 {len(btc_all)}")
-    print(f"  BTC短期:                 {len(btc_markets)}")
-    print(f"  CLOB板取得:              {'OK' if test_token else 'SKIP'}")
-    print(DIVIDER)
+    # ── Summary ──
+    print(f"\n{DIV}")
+    print("  結果サマリー")
+    print(DIV)
+    print(f"  Gamma API /events   : {'OK' if gamma_ok else 'NG'}  ({gamma_market_count} markets)")
+    print(f"  CLOB API  /markets  : {'OK' if clob_ok else 'NG'}  ({len(all_clob_raw)} markets sampled)")
+    print(f"  BTC関連             : {len(btc_all)}")
+    print(f"  BTC短期             : {len(btc_short)}")
+    print(f"  CLOB /book          : {'OK' if book_ok else 'NG/EMPTY'}")
+    print(DIV)
 
-    if not btc_markets:
-        print("\n  NOTE: BTC短期市場が0件の場合、Polymarketに該当市場が現在")
-        print("  存在しない可能性があります。bot起動時はポーリングで継続監視します。")
-        print("  キーワードを .env や market_discovery.py で調整可能です。")
+    if not btc_short:
+        print("\n  NOTE: BTC短期市場が0件の場合、Polymarketに現在該当市場がないか、")
+        print("  キーワードが合っていない可能性があります。")
+        print("  src/market_discovery.py の BTC_KEYWORDS / SHORT_TERM_KEYWORDS を調整してください。")
     print()
 
 
+# ────────────────────────────────────────────────
+#  Demo mode
+# ────────────────────────────────────────────────
 async def run_demo() -> None:
-    """Demo mode: use mock data to verify script logic."""
-    from src.models import OrderBookLevel, OrderBookSnapshot
+    print(DIV)
+    print("  Polymarket 市場取得チェック [DEMO]")
+    print(f"  {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    print("  ※ デモデータ使用（API接続なし）")
+    print(DIV)
 
-    print(DIVIDER)
-    print("  Polymarket 市場取得チェック [DEMO MODE]")
-    print(f"  実行時刻: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
-    print(f"  ※ デモデータを使用しています（API接続なし）")
-    print(DIVIDER)
+    # Step 1 — skip Gamma
+    print("\n[1/4] Gamma API /events ... SKIP (demo)")
 
-    all_events = DEMO_EVENTS
+    # Step 2 — CLOB mock
+    print("\n[2/4] CLOB API /markets (デモ) ...")
+    all_raw, cursor = DEMO_CLOB_PAGES[0]
+    print(f"  page 1: {len(all_raw)} markets  next_cursor={cursor}")
+    print(f"  total from CLOB (sampled): {len(all_raw)}  OK")
 
-    # Step 1
-    print(f"\n[1/4] デモイベントをロード...")
-    print(f"  -> 取得イベント数: {len(all_events)}")
-    total_markets = sum(len(e.get("markets", [])) for e in all_events)
-    print(f"  -> イベント内の市場数合計: {total_markets}")
+    # Step 3 — filter
+    print(f"\n[3/4] BTC短期市場を抽出 ...")
+    print(f"  BTC keywords:   {BTC_KEYWORDS}")
+    print(f"  Short keywords: {SHORT_TERM_KEYWORDS}")
 
-    # Step 2
-    print_events_sample(all_events)
+    btc_all = [m for m in all_raw if is_btc((m.get("question") or "").lower())]
+    btc_short = [m for m in btc_all if is_short_term((m.get("question") or "").lower())]
+    print(f"  全市場:                  {len(all_raw)}")
+    print(f"  BTC関連:                 {len(btc_all)}")
+    print(f"  BTC関連 + 短期:          {len(btc_short)}")
 
-    # Step 3
-    print(f"[3/4] BTC関連市場を抽出中...")
-    print(f"  BTC キーワード: {BTC_KEYWORDS}")
-    print(f"  短期キーワード: {SHORT_TERM_KEYWORDS}")
-    btc_all, btc_markets = filter_btc_markets(all_events)
-    print(f"\n  BTC関連 (全件):         {len(btc_all)} 件")
-    print(f"  BTC関連 + 短期フィルタ: {len(btc_markets)} 件")
-    print_btc_markets(btc_all, "https://gamma-api.polymarket.com")
+    print(f"\n  -- BTC関連市場 ({len(btc_all)} 件) --")
+    print(THIN)
+    for i, m in enumerate(btc_all, 1):
+        print_market_row(i, m)
 
-    # Step 4
-    print(f"\n[4/4] CLOB API 板情報テスト (デモデータ)...")
-    test_token, test_question = find_test_token(btc_markets, btc_all, all_events)
+    # Step 4 — book mock
+    print(f"\n[4/4] CLOB API /book テスト (デモ) ...")
+    first_token = _tokens(btc_short[0]["tokens"])[0] if btc_short else None
+    if first_token:
+        tid = first_token["token_id"]
+        print(f"  market:   {btc_short[0]['question'][:60]}")
+        print(f"  token_id: {tid}")
 
-    if test_token:
-        print(f"  市場: {test_question}")
-        print(f"  token_id: {test_token[:24]}...")
-
-        # Parse demo order book
-        bids = [OrderBookLevel(price=float(b["price"]), size=float(b["size"])) for b in DEMO_ORDER_BOOK["bids"]]
-        asks = [OrderBookLevel(price=float(a["price"]), size=float(a["size"])) for a in DEMO_ORDER_BOOK["asks"]]
-        bids.sort(key=lambda x: x.price, reverse=True)
-        asks.sort(key=lambda x: x.price)
+        bids = sorted(
+            [OrderBookLevel(float(b["price"]), float(b["size"])) for b in DEMO_BOOK["bids"]],
+            key=lambda x: x.price, reverse=True,
+        )
+        asks = sorted(
+            [OrderBookLevel(float(a["price"]), float(a["size"])) for a in DEMO_BOOK["asks"]],
+            key=lambda x: x.price,
+        )
         book = OrderBookSnapshot(bids=bids, asks=asks)
-
-        print(f"  bids: {len(book.bids)} 件  asks: {len(book.asks)} 件")
-        if book.best_bid is not None:
-            print(f"  best bid: {book.best_bid:.4f} (size={book.best_bid_size:.2f})")
-        if book.best_ask is not None:
-            print(f"  best ask: {book.best_ask:.4f} (size={book.best_ask_size:.2f})")
-        if book.spread is not None:
-            print(f"  spread:   {book.spread:.4f}")
+        print_book(book)
 
     # Summary
-    print(f"\n{DIVIDER}")
-    print("  まとめ")
-    print(DIVIDER)
-    print(f"  Gamma API イベント取得:  DEMO ({len(all_events)} events)")
-    print(f"  市場数:                  {total_markets}")
-    print(f"  BTC関連:                 {len(btc_all)}")
-    print(f"  BTC短期:                 {len(btc_markets)}")
-    print(f"  CLOB板取得:              DEMO")
-    print(DIVIDER)
+    print(f"\n{DIV}")
+    print("  結果サマリー")
+    print(DIV)
+    print(f"  Gamma API /events   : SKIP")
+    print(f"  CLOB API  /markets  : DEMO ({len(all_raw)} markets)")
+    print(f"  BTC関連             : {len(btc_all)}")
+    print(f"  BTC短期             : {len(btc_short)}")
+    print(f"  CLOB /book          : DEMO")
+    print(DIV)
     print()
-    print("  ライブAPIに接続する場合:")
-    print("    python scripts/check_markets.py")
+    print("  ライブ実行: python scripts/check_markets.py")
     print()
 
 
+# ────────────────────────────────────────────────
 async def main() -> None:
     if "--demo" in sys.argv:
         await run_demo()
