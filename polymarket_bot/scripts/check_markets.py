@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config
-from src.market_discovery import BTC_KEYWORDS, SHORT_TERM_KEYWORDS, MarketDiscovery
+from src.market_discovery import BTC_KEYWORDS, SHORT_TERM_MAX_DAYS, MarketDiscovery
 from src.models import OrderBookLevel, OrderBookSnapshot
 
 DIV = "=" * 78
@@ -129,8 +129,18 @@ def is_btc(q: str) -> bool:
     return any(kw in q for kw in BTC_KEYWORDS)
 
 
-def is_short_term(q: str) -> bool:
-    return any(kw in q for kw in SHORT_TERM_KEYWORDS)
+def is_short_term(m: dict) -> bool:
+    """Check if market ends within SHORT_TERM_MAX_DAYS."""
+    end_date = m.get("end_date_iso", m.get("end_date", ""))
+    if not end_date:
+        return True
+    try:
+        from datetime import datetime, timezone
+        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        days_left = (end_dt - datetime.now(timezone.utc)).days
+        return 0 <= days_left <= SHORT_TERM_MAX_DAYS
+    except (ValueError, TypeError):
+        return True
 
 
 def print_market_row(idx: int, m: dict) -> None:
@@ -142,13 +152,14 @@ def print_market_row(idx: int, m: dict) -> None:
     vol = m.get("volume", "0")
     tokens = _tokens(m.get("tokens", []))
     ql = q.lower()
-    tag = " [SHORT-TERM]" if (is_btc(ql) and is_short_term(ql)) else ""
+    tag = " [SHORT-TERM]" if (is_btc(ql) and is_short_term(m)) else ""
 
     print(f"\n  #{idx}{tag}")
+    end = m.get("end_date_iso", m.get("end_date", "N/A"))
     print(f"    question:     {q[:75]}")
     print(f"    slug:         {slug}")
     print(f"    condition_id: {cond[:28]}{'...' if len(cond) > 28 else ''}")
-    print(f"    active={active}  closed={closed}  volume={vol}")
+    print(f"    active={active}  closed={closed}  volume={vol}  end_date={end}")
     for t in tokens[:2]:
         tid = t.get("token_id", "?")
         print(f"    token [{t.get('outcome','?'):3}]: {tid[:28]}{'...' if len(tid)>28 else ''}  price={t.get('price','?')}")
@@ -211,8 +222,8 @@ async def run_live() -> None:
 
     # ── Step 3: BTC filtering ──
     print(f"\n[3/4] BTC短期市場を抽出 ...")
-    print(f"  BTC keywords:   {BTC_KEYWORDS}")
-    print(f"  Short keywords: {SHORT_TERM_KEYWORDS}")
+    print(f"  BTC keywords:     {BTC_KEYWORDS}")
+    print(f"  短期判定:         end_date が {SHORT_TERM_MAX_DAYS}日以内")
 
     # Collect raw markets from both sources
     combined_raw: list[dict] = []
@@ -231,7 +242,7 @@ async def run_live() -> None:
             unique_raw.append(m)
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
-    btc_short = [m for m in btc_all if is_short_term((m.get("question") or "").lower())]
+    btc_short = [m for m in btc_all if is_short_term(m)]
 
     print(f"  全ユニーク市場:          {len(unique_raw)}")
     print(f"  BTC関連:                 {len(btc_all)}")
@@ -312,11 +323,11 @@ async def run_demo() -> None:
 
     # Step 3 — filter
     print(f"\n[3/4] BTC短期市場を抽出 ...")
-    print(f"  BTC keywords:   {BTC_KEYWORDS}")
-    print(f"  Short keywords: {SHORT_TERM_KEYWORDS}")
+    print(f"  BTC keywords:     {BTC_KEYWORDS}")
+    print(f"  短期判定:         end_date が {SHORT_TERM_MAX_DAYS}日以内")
 
     btc_all = [m for m in all_raw if is_btc((m.get("question") or "").lower())]
-    btc_short = [m for m in btc_all if is_short_term((m.get("question") or "").lower())]
+    btc_short = [m for m in btc_all if is_short_term(m)]
     print(f"  全市場:                  {len(all_raw)}")
     print(f"  BTC関連:                 {len(btc_all)}")
     print(f"  BTC関連 + 短期:          {len(btc_short)}")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -19,13 +20,10 @@ from .models import Market, MarketToken, OrderBookLevel, OrderBookSnapshot
 
 logger = logging.getLogger("polymarket_bot")
 
-# Keywords to identify BTC short-term markets
+# Keywords to identify BTC-related markets
 BTC_KEYWORDS = ["btc", "bitcoin"]
-SHORT_TERM_KEYWORDS = [
-    "5-minute", "5 minute", "5min",
-    "1-minute", "1 minute", "1min",
-    "short",
-]
+# Maximum days until end_date to qualify as "short-term"
+SHORT_TERM_MAX_DAYS = 30
 
 
 class MarketDiscovery:
@@ -240,8 +238,22 @@ class MarketDiscovery:
 
     @staticmethod
     def _is_btc_short_term(market: Market) -> bool:
-        """Check if market is BTC-related and short-term."""
+        """Check if market is BTC-related and short-term (ends within 30 days)."""
         q = market.question.lower()
         has_btc = any(kw in q for kw in BTC_KEYWORDS)
-        has_short = any(kw in q for kw in SHORT_TERM_KEYWORDS)
-        return has_btc and has_short
+        if not has_btc:
+            return False
+
+        # If no end_date, accept all BTC markets
+        if not market.end_date:
+            return True
+
+        # Parse end_date and check if within SHORT_TERM_MAX_DAYS
+        try:
+            end_dt = datetime.fromisoformat(market.end_date.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            days_left = (end_dt - now).days
+            return 0 <= days_left <= SHORT_TERM_MAX_DAYS
+        except (ValueError, TypeError):
+            # If date parsing fails, include it anyway
+            return True
