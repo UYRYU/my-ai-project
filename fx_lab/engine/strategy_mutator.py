@@ -1,6 +1,7 @@
 """戦略の突然変異・交差エンジン
 
 上位戦略の特徴を分析し、次世代戦略を生成する。
+カテゴリ多様性を保証するための制約付き生成。
 """
 
 import copy
@@ -11,7 +12,9 @@ from typing import Any
 
 from engine.strategy_generator import (
     ENTRY_SIGNALS, ENTRY_FILTERS, TP_TYPES, SL_TYPES, EXIT_EXTRAS,
+    SIGNAL_CATEGORIES,
     _rand_val, _resolve_block, generate_strategy_config, write_strategy_file,
+    _get_signals_by_category,
 )
 
 
@@ -35,7 +38,7 @@ def mutate_config(config: dict, intensity: float = 0.3) -> dict:
     # エントリーシグナルのパラメータを変異
     sig = cfg["entry_signal"]
     for key in sig:
-        if key == "type":
+        if key in ("type", "category"):
             continue
         if random.random() < 0.5:
             sig[key] = _mutate_value(sig[key], intensity)
@@ -47,6 +50,14 @@ def mutate_config(config: dict, intensity: float = 0.3) -> dict:
         if s >= l:
             sig["short_period"] = min(s, l)
             sig["long_period"] = max(s, l) + 1
+
+    # RSI逆張りの制約維持
+    if sig.get("type") == "rsi_reversal":
+        ob = sig.get("overbought", 70)
+        os_ = sig.get("oversold", 30)
+        if os_ >= ob:
+            sig["oversold"] = min(os_, ob) - 5
+            sig["overbought"] = max(os_, ob) + 5
 
     # フィルターの変異
     for filt in cfg.get("entry_filters", []):
@@ -127,6 +138,7 @@ def analyze_top_features(top_configs: list[dict]) -> dict:
     """上位戦略群の共通特徴を分析"""
     analysis = {
         "signal_types": {},
+        "category_types": {},
         "filter_types": {},
         "avg_params": {},
     }
@@ -134,6 +146,9 @@ def analyze_top_features(top_configs: list[dict]) -> dict:
     for cfg in top_configs:
         sig_type = cfg["entry_signal"]["type"]
         analysis["signal_types"][sig_type] = analysis["signal_types"].get(sig_type, 0) + 1
+
+        cat = cfg["entry_signal"].get("category", "unknown")
+        analysis["category_types"][cat] = analysis["category_types"].get(cat, 0) + 1
 
         for filt in cfg.get("entry_filters", []):
             ft = filt["type"]
@@ -145,50 +160,75 @@ def analyze_top_features(top_configs: list[dict]) -> dict:
 def generate_next_generation(
     top_configs: list[dict],
     count: int = 50,
-    mutation_rate: float = 0.6,
+    mutation_rate: float = 0.55,
     crossover_rate: float = 0.25,
-    random_rate: float = 0.15,
+    random_rate: float = 0.20,
     base_seed: int = 0,
 ) -> list[dict]:
     """上位戦略をもとに次世代戦略を生成
 
-    - mutation_rate: 上位戦略の突然変異から生成する割合
-    - crossover_rate: 上位戦略の交差から生成する割合
-    - random_rate: 完全ランダム生成の割合
+    カテゴリ多様性を保証:
+    - ランダム生成枠の一部を、上位に含まれないカテゴリに割り当てる
+    - 各カテゴリの上限 = count / カテゴリ数 + 5
     """
     random.seed(base_seed)
     next_gen = []
     names_seen = set()
 
+    categories = list(SIGNAL_CATEGORIES.keys())
+    max_per_category = (count // len(categories)) + 5
+    category_counts: dict[str, int] = {cat: 0 for cat in categories}
+
     n_mutation = int(count * mutation_rate)
     n_crossover = int(count * crossover_rate)
     n_random = count - n_mutation - n_crossover
+
+    def _add(cfg: dict) -> bool:
+        if cfg["name"] in names_seen:
+            return False
+        cat = cfg.get("entry_signal", {}).get("category", "unknown")
+        if cat in category_counts and category_counts[cat] >= max_per_category:
+            return False
+        names_seen.add(cfg["name"])
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+        next_gen.append(cfg)
+        return True
 
     # 突然変異
     for i in range(n_mutation):
         parent = random.choice(top_configs)
         intensity = random.uniform(0.1, 0.5)
         child = mutate_config(parent, intensity=intensity)
-        if child["name"] not in names_seen:
-            names_seen.add(child["name"])
-            next_gen.append(child)
+        _add(child)
 
     # 交差
     if len(top_configs) >= 2:
         for i in range(n_crossover):
             pa, pb = random.sample(top_configs, 2)
             child = crossover_configs(pa, pb)
-            child = mutate_config(child, intensity=0.1)  # 軽い変異も加える
-            if child["name"] not in names_seen:
-                names_seen.add(child["name"])
-                next_gen.append(child)
+            child = mutate_config(child, intensity=0.1)
+            _add(child)
 
-    # 完全ランダム
+    # ランダム生成 (カテゴリバランスを取る)
+    # まず、上位に含まれないカテゴリを優先
+    top_categories = set()
+    for cfg in top_configs:
+        top_categories.add(cfg.get("entry_signal", {}).get("category", "unknown"))
+
+    underrepresented = [cat for cat in categories if cat not in top_categories]
+
+    for cat in underrepresented:
+        signals = _get_signals_by_category(cat)
+        if signals and len(next_gen) < count:
+            for _ in range(max(2, n_random // len(categories))):
+                sig_template = random.choice(signals)
+                cfg = generate_strategy_config(seed=base_seed + 10000 + len(next_gen), sig_template=sig_template)
+                _add(cfg)
+
+    # 残りはランダム
     for i in range(n_random):
-        cfg = generate_strategy_config(seed=base_seed + 10000 + i)
-        if cfg["name"] not in names_seen:
-            names_seen.add(cfg["name"])
-            next_gen.append(cfg)
+        cfg = generate_strategy_config(seed=base_seed + 20000 + i)
+        _add(cfg)
 
     # 不足分はランダムで補充
     extra_seed = base_seed + 50000

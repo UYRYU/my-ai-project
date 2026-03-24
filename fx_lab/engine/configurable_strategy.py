@@ -2,12 +2,31 @@
 
 自動生成された戦略設定(dict)を受け取り、
 strategy_base.Strategy として動作するユニバーサル戦略クラス。
+
+対応シグナル: ema_cross, rsi_reversal, rsi_trend, bb_bounce, bb_break,
+              donchian_break, atr_break, momentum, wick_reversal,
+              consecutive_reversal, hilo_break
+
+対応フィルター: time_filter, session_filter, atr_filter, htf_trend, rsi_range_filter
+
+対応エグジット: 固定/ATR TP/SL, 建値移動, トレーリング, 時間切れ, 逆シグナル,
+               分割利確, 連敗停止
 """
 
 import math
 import pandas as pd
 import numpy as np
 from strategy_base import Strategy
+
+
+# セッション定義 (UTC時間)
+SESSIONS = {
+    "tokyo":        (0, 9),     # 00:00-09:00 UTC (09:00-18:00 JST)
+    "london":       (7, 16),    # 07:00-16:00 UTC
+    "newyork":      (13, 22),   # 13:00-22:00 UTC
+    "tokyo_london": (0, 16),    # 東京+ロンドン
+    "london_ny":    (7, 22),    # ロンドン+NY
+}
 
 
 class ConfigurableStrategy(Strategy):
@@ -18,11 +37,8 @@ class ConfigurableStrategy(Strategy):
         self.config = config
         self.name = config.get("name", "Unnamed")
 
-        # エントリーシグナル設定
         self.entry_signal = config.get("entry_signal", {})
-        # エントリーフィルター設定
         self.entry_filters = config.get("entry_filters", [])
-        # エグジット設定
         self.exit_rules = config.get("exit_rules", {})
 
     # ----------------------------------------------------------------
@@ -75,6 +91,35 @@ class ConfigurableStrategy(Strategy):
         df.loc[df["close"] > df["htf_ema"], "htf_trend"] = 1
         df.loc[df["close"] < df["htf_ema"], "htf_trend"] = -1
 
+    def _add_wick_info(self, df: pd.DataFrame) -> None:
+        """ヒゲ情報を計算"""
+        body = (df["close"] - df["open"]).abs()
+        body = body.replace(0, 1e-10)  # ゼロ除算防止
+        df["upper_wick"] = df["high"] - df[["close", "open"]].max(axis=1)
+        df["lower_wick"] = df[["close", "open"]].min(axis=1) - df["low"]
+        df["wick_ratio_upper"] = df["upper_wick"] / body
+        df["wick_ratio_lower"] = df["lower_wick"] / body
+
+    def _add_consecutive(self, df: pd.DataFrame) -> None:
+        """連続陽線/陰線カウント"""
+        bullish = (df["close"] > df["open"]).astype(int)
+        bearish = (df["close"] < df["open"]).astype(int)
+
+        # 連続カウント (NumPyベース)
+        bull_count = np.zeros(len(df), dtype=int)
+        bear_count = np.zeros(len(df), dtype=int)
+        b_vals = bullish.values
+        s_vals = bearish.values
+
+        for i in range(1, len(df)):
+            if b_vals[i]:
+                bull_count[i] = bull_count[i - 1] + 1
+            if s_vals[i]:
+                bear_count[i] = bear_count[i - 1] + 1
+
+        df["consecutive_bull"] = bull_count
+        df["consecutive_bear"] = bear_count
+
     # ----------------------------------------------------------------
     # シグナル生成
     # ----------------------------------------------------------------
@@ -111,7 +156,6 @@ class ConfigurableStrategy(Strategy):
         elif sig_type == "rsi_trend":
             period = sig.get("period", 14)
             self._add_rsi(df, period, "rsi")
-            # RSI50超えで買い、50割れで売り
             cross_up = (df["rsi"] > 50) & (df["rsi"].shift(1) <= 50)
             cross_down = (df["rsi"] < 50) & (df["rsi"].shift(1) >= 50)
             df.loc[cross_up, "signal"] = 1
@@ -157,6 +201,45 @@ class ConfigurableStrategy(Strategy):
             df.loc[cross_up, "signal"] = 1
             df.loc[cross_down, "signal"] = -1
 
+        elif sig_type == "wick_reversal":
+            wick_ratio = sig.get("wick_ratio", 2.0)
+            min_wick_atr = sig.get("min_wick_atr", 0.5)
+            wick_atr_period = sig.get("atr_period", 14)
+            self._add_atr(df, wick_atr_period)
+            self._add_wick_info(df)
+            # 下ヒゲが長い → 買いシグナル
+            long_lower = (df["wick_ratio_lower"] >= wick_ratio) & (df["lower_wick"] >= df["atr"] * min_wick_atr)
+            # 上ヒゲが長い → 売りシグナル
+            long_upper = (df["wick_ratio_upper"] >= wick_ratio) & (df["upper_wick"] >= df["atr"] * min_wick_atr)
+            df.loc[long_lower, "signal"] = 1
+            df.loc[long_upper, "signal"] = -1
+
+        elif sig_type == "consecutive_reversal":
+            count = sig.get("consecutive_count", 4)
+            self._add_consecutive(df)
+            # N本連続陰線後 → 買い
+            df.loc[df["consecutive_bear"] >= count, "signal"] = 1
+            # N本連続陽線後 → 売り
+            df.loc[df["consecutive_bull"] >= count, "signal"] = -1
+
+        elif sig_type == "hilo_break":
+            lookback = sig.get("lookback", 20)
+            confirm = sig.get("confirm_bars", 1)
+            # 直近N本の高値/安値
+            rolling_high = df["high"].rolling(window=lookback, min_periods=1).max().shift(1)
+            rolling_low = df["low"].rolling(window=lookback, min_periods=1).min().shift(1)
+            # ブレイク確認 (confirm_bars本連続でブレイク)
+            if confirm <= 1:
+                df.loc[df["close"] > rolling_high, "signal"] = 1
+                df.loc[df["close"] < rolling_low, "signal"] = -1
+            else:
+                above = (df["close"] > rolling_high).astype(int)
+                below = (df["close"] < rolling_low).astype(int)
+                above_sum = above.rolling(window=confirm, min_periods=confirm).sum()
+                below_sum = below.rolling(window=confirm, min_periods=confirm).sum()
+                df.loc[above_sum >= confirm, "signal"] = 1
+                df.loc[below_sum >= confirm, "signal"] = -1
+
         # フィルター適用
         for filt in self.entry_filters:
             ftype = filt.get("type", "")
@@ -166,6 +249,16 @@ class ConfigurableStrategy(Strategy):
                 end_h = filt.get("end_hour", 20)
                 outside = ~((df["hour"] >= start_h) & (df["hour"] < end_h))
                 df.loc[outside, "signal"] = 0
+
+            elif ftype == "session_filter":
+                session = filt.get("session", "london")
+                if session in SESSIONS:
+                    s_start, s_end = SESSIONS[session]
+                    if s_start < s_end:
+                        outside = ~((df["hour"] >= s_start) & (df["hour"] < s_end))
+                    else:
+                        outside = (df["hour"] >= s_end) & (df["hour"] < s_start)
+                    df.loc[outside, "signal"] = 0
 
             elif ftype == "atr_filter":
                 min_atr = filt.get("min_atr", 0.0)
@@ -177,9 +270,18 @@ class ConfigurableStrategy(Strategy):
             elif ftype == "htf_trend":
                 htf_period = filt.get("period", 50)
                 self._add_higher_tf_trend(df, htf_period)
-                # トレンドと一致しないシグナルを除去
                 df.loc[(df["signal"] == 1) & (df["htf_trend"] != 1), "signal"] = 0
                 df.loc[(df["signal"] == -1) & (df["htf_trend"] != -1), "signal"] = 0
+
+            elif ftype == "rsi_range_filter":
+                rsi_period = filt.get("rsi_period", 14)
+                rsi_low = filt.get("rsi_low", 30)
+                rsi_high = filt.get("rsi_high", 70)
+                col = f"rsi_filt_{rsi_period}"
+                if col not in df.columns:
+                    self._add_rsi(df, rsi_period, col)
+                # RSIが範囲外ならシグナル除去
+                df.loc[(df[col] < rsi_low) | (df[col] > rsi_high), "signal"] = 0
 
         return df
 
@@ -209,7 +311,7 @@ class ConfigurableStrategy(Strategy):
         if n == 0:
             return []
 
-        # NumPy配列に変換（iterrows を完全回避）
+        # NumPy配列に変換
         signals = df["signal"].values
         closes = df["close"].values
         highs = df["high"].values
@@ -239,18 +341,35 @@ class ConfigurableStrategy(Strategy):
         trail_atr_mult = rules.get("trail_atr_mult", 1.0)
         be_trigger = rules.get("be_trigger_pips", 0.15)
 
+        # 分割利確設定
+        use_partial = bool(rules.get("partial_tp", False))
+        partial_ratio = rules.get("partial_ratio", 0.5)  # クローズする割合
+        partial_tp_ratio = rules.get("partial_tp_ratio", 0.5)  # TP距離の何割で発動
+
+        # 連敗停止
+        use_loss_streak_stop = bool(rules.get("loss_streak_stop", False))
+        max_consecutive_losses = int(rules.get("max_consecutive_losses", 5))
+
         trades = []
+        consecutive_losses = 0
         i = 0
 
         while i < n:
-            # シグナル探索
+            # 連敗停止チェック
+            if use_loss_streak_stop and consecutive_losses >= max_consecutive_losses:
+                # 次のシグナルが出るまでスキップ (リセット)
+                consecutive_losses = 0
+                # 一定本数スキップ
+                i += max_bars if max_bars > 0 else 60
+                continue
+
             sig = signals[i]
             if sig == 0:
                 i += 1
                 continue
 
             # エントリー
-            direction = 1 if sig == 1 else -1  # 1=long, -1=short
+            direction = 1 if sig == 1 else -1
             entry_price = closes[i]
             entry_time = timestamps[i]
             atr_entry = atrs[i]
@@ -273,6 +392,11 @@ class ConfigurableStrategy(Strategy):
                 tp_level = entry_price - tp_dist
                 sl_level = entry_price + sl_dist
 
+            # 分割利確レベル
+            partial_done = False
+            if use_partial:
+                partial_level = entry_price + (tp_dist * partial_tp_ratio * direction)
+
             # トレーリング用
             best_price = entry_price
             if use_trailing:
@@ -285,11 +409,25 @@ class ConfigurableStrategy(Strategy):
             bars_held = 0
             j = i + 1
             exited = False
+            partial_pnl = 0.0
+            remaining_ratio = 1.0
+
             while j < n:
                 bars_held += 1
                 h = highs[j]
                 l = lows[j]
                 c = closes[j]
+
+                # 分割利確判定
+                if use_partial and not partial_done:
+                    if direction == 1 and h >= partial_level:
+                        partial_pnl = (partial_level - entry_price) * partial_ratio
+                        remaining_ratio = 1.0 - partial_ratio
+                        partial_done = True
+                    elif direction == -1 and l <= partial_level:
+                        partial_pnl = (entry_price - partial_level) * partial_ratio
+                        remaining_ratio = 1.0 - partial_ratio
+                        partial_done = True
 
                 # TP判定
                 if direction == 1 and h >= tp_level:
@@ -346,9 +484,9 @@ class ConfigurableStrategy(Strategy):
                 exit_price = closes[j]
                 exit_time = timestamps[j]
                 if direction == 1:
-                    raw_pnl = exit_price - entry_price
+                    raw_pnl = (exit_price - entry_price) * remaining_ratio + partial_pnl
                 else:
-                    raw_pnl = entry_price - exit_price
+                    raw_pnl = (entry_price - exit_price) * remaining_ratio + partial_pnl
                 pnl = raw_pnl - spread_cost - commission_cost
 
                 trades.append(Trade(
@@ -359,6 +497,13 @@ class ConfigurableStrategy(Strategy):
                     exit_price=exit_price,
                     pnl=pnl,
                 ))
+
+                # 連敗カウント
+                if pnl < 0:
+                    consecutive_losses += 1
+                else:
+                    consecutive_losses = 0
+
                 i = j + 1
             else:
                 i = j if j < n else j

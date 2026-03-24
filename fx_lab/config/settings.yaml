@@ -9,9 +9,11 @@ timeframes:
 
 initial_balance: 100000
 
-spread: 0.2
+# スプレッド (円建てペアの場合: 0.02 = 2銭 ≈ 2pips)
+spread: 0.02
 
-commission: 0.01
+# 手数料 (片道、円建て)
+commission: 0.005
 
 ranking_filters:
   min_pf: 1.2
@@ -19,14 +21,25 @@ ranking_filters:
   min_trades: 100
 
 data_dir: "data/raw"
+
+# MT4/MT5エクスポート元ディレクトリ (任意)
+# ここにMT4/MT5のCSVを置けば自動変換される
+mt_import_dir: "data/mt_import"
+
 results_dir: "results"
 strategies_dir: "strategies/generated"
 strategies_dir_base: "strategies"
 
 research:
   rounds: 5
-  strategies_per_round: 50
+  strategies_per_round: 60
   top_k: 10
   approved_pf: 1.35
   approved_max_dd: 0.12
   min_trades: 100
+
+  # IS/OOS分割比率 (IS=70%, OOS=30%)
+  is_ratio: 0.7
+
+  # Walk-Forward窓数
+  wf_windows: 3

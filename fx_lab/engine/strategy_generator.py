@@ -1,6 +1,7 @@
 """戦略自動生成エンジン
 
 ビルディングブロックをランダムに組み合わせて戦略設定を大量生成する。
+カテゴリごとの生成数上限で多様性を保証する。
 """
 
 import os
@@ -14,29 +15,67 @@ from typing import Any
 # ビルディングブロック定義
 # ================================================================
 
+# カテゴリ分類 (カテゴリ → シグナルタイプのリスト)
+SIGNAL_CATEGORIES = {
+    "trend_follow": ["ema_cross", "rsi_trend", "momentum"],
+    "mean_reversion": ["rsi_reversal", "bb_bounce", "wick_reversal", "consecutive_reversal"],
+    "breakout": ["bb_break", "donchian_break", "atr_break", "hilo_break"],
+}
+
 ENTRY_SIGNALS = [
-    # EMAクロス系
-    {"type": "ema_cross", "short_period": (3, 15), "long_period": (15, 60)},
-    # RSI逆張り
-    {"type": "rsi_reversal", "period": (7, 21), "oversold": (20, 35), "overbought": (65, 80)},
-    # RSI順張り
-    {"type": "rsi_trend", "period": (7, 21)},
-    # BB反発
-    {"type": "bb_bounce", "period": (10, 30), "std_mult": (1.5, 3.0)},
-    # BBブレイク
-    {"type": "bb_break", "period": (10, 30), "std_mult": (1.5, 3.0)},
-    # ドンチャンブレイク
-    {"type": "donchian_break", "period": (10, 40)},
-    # ATRブレイク
-    {"type": "atr_break", "period": (7, 21), "multiplier": (1.0, 3.0)},
+    # === トレンドフォロー系 ===
+    # EMAクロス
+    {"type": "ema_cross", "category": "trend_follow",
+     "short_period": (3, 15), "long_period": (15, 60)},
+    # RSI順張り (50超え/割れ)
+    {"type": "rsi_trend", "category": "trend_follow",
+     "period": (7, 21)},
     # モメンタム
-    {"type": "momentum", "period": (5, 20)},
+    {"type": "momentum", "category": "trend_follow",
+     "period": (5, 20)},
+
+    # === 平均回帰系 ===
+    # RSI逆張り
+    {"type": "rsi_reversal", "category": "mean_reversion",
+     "period": (7, 21), "oversold": (20, 35), "overbought": (65, 80)},
+    # BB反発
+    {"type": "bb_bounce", "category": "mean_reversion",
+     "period": (10, 30), "std_mult": (1.5, 3.0)},
+    # ヒゲ反転 (長いヒゲ後の反転)
+    {"type": "wick_reversal", "category": "mean_reversion",
+     "wick_ratio": (1.5, 4.0), "min_wick_atr": (0.3, 1.5), "atr_period": (7, 21)},
+    # 連続陽線/陰線後の反転
+    {"type": "consecutive_reversal", "category": "mean_reversion",
+     "consecutive_count": (3, 7)},
+
+    # === ブレイクアウト系 ===
+    # BBブレイク (拡張ブレイク)
+    {"type": "bb_break", "category": "breakout",
+     "period": (10, 30), "std_mult": (1.5, 3.0)},
+    # ドンチャンブレイク
+    {"type": "donchian_break", "category": "breakout",
+     "period": (10, 40)},
+    # ATR急増ブレイク
+    {"type": "atr_break", "category": "breakout",
+     "period": (7, 21), "multiplier": (1.0, 3.0)},
+    # 直近高値安値ブレイク
+    {"type": "hilo_break", "category": "breakout",
+     "lookback": (5, 30), "confirm_bars": (1, 3)},
 ]
 
 ENTRY_FILTERS = [
+    # 時間帯フィルター (汎用)
     {"type": "time_filter", "start_hour": (7, 10), "end_hour": (18, 22)},
+    # セッションフィルター (東京/ロンドン/NY)
+    {"type": "session_filter",
+     "session": ("tokyo", "london", "newyork", "tokyo_london", "london_ny")},
+    # ATRボラティリティフィルター
     {"type": "atr_filter", "min_atr": (0.01, 0.1), "max_atr": (0.3, 1.0)},
+    # 上位足トレンドフィルター (M5方向一致)
     {"type": "htf_trend", "period": (30, 100)},
+    # RSIレンジフィルター (極端な値域を避ける)
+    {"type": "rsi_range_filter", "rsi_period": (14, 21),
+     "rsi_low": (25, 40), "rsi_high": (60, 75)},
 ]
 
 TP_TYPES = [
@@ -50,11 +89,20 @@ SL_TYPES = [
 ]
 
 EXIT_EXTRAS = [
+    # 建値移動
     {"breakeven": True, "be_trigger_pips": (0.1, 0.4)},
+    # トレーリング(固定)
     {"trailing": True, "trail_type": "fixed", "trail_distance": (0.1, 0.4)},
+    # トレーリング(ATR)
     {"trailing": True, "trail_type": "atr_mult", "trail_atr_mult": (0.5, 2.0)},
+    # 時間切れ決済
     {"max_bars": (30, 300)},
+    # 逆シグナル決済
     {"reverse_signal_exit": True},
+    # 分割利確 (TP距離の半分で半分クローズ)
+    {"partial_tp": True, "partial_ratio": (0.3, 0.7), "partial_tp_ratio": (0.4, 0.6)},
+    # 連敗停止
+    {"loss_streak_stop": True, "max_consecutive_losses": (3, 8)},
 ]
 
 
@@ -68,6 +116,9 @@ def _rand_val(spec: Any) -> Any:
         lo, hi = spec
         if isinstance(lo, int) and isinstance(hi, int):
             return random.randint(lo, hi)
+        if isinstance(lo, str):
+            # 文字列のtuple → ランダム選択
+            return random.choice(spec)
         return round(random.uniform(lo, hi), 4)
     return spec
 
@@ -85,16 +136,46 @@ def _make_name(config: dict) -> str:
 
 
 # ================================================================
+# カテゴリ管理
+# ================================================================
+
+def _get_signals_by_category(category: str) -> list[dict]:
+    """カテゴリに属するシグナルテンプレートを返す"""
+    return [s for s in ENTRY_SIGNALS if s.get("category") == category]
+
+
+def _pick_signal_balanced(category_counts: dict, max_per_category: int) -> dict:
+    """カテゴリバランスを考慮してシグナルを選択"""
+    categories = list(SIGNAL_CATEGORIES.keys())
+    random.shuffle(categories)
+
+    for cat in categories:
+        if category_counts.get(cat, 0) < max_per_category:
+            signals = _get_signals_by_category(cat)
+            if signals:
+                return random.choice(signals)
+
+    # 全カテゴリ上限到達 → 最も少ないカテゴリから選択
+    min_cat = min(categories, key=lambda c: category_counts.get(c, 0))
+    signals = _get_signals_by_category(min_cat)
+    return random.choice(signals) if signals else random.choice(ENTRY_SIGNALS)
+
+
+# ================================================================
 # 戦略生成
 # ================================================================
 
-def generate_strategy_config(seed: int | None = None) -> dict:
-    """ランダムに1つの戦略設定を生成"""
+def generate_strategy_config(seed: int | None = None, sig_template: dict | None = None) -> dict:
+    """ランダムに1つの戦略設定を生成
+
+    sig_template: 指定されたらそのシグナルテンプレートを使用
+    """
     if seed is not None:
         random.seed(seed)
 
     # エントリーシグナル選択
-    sig_template = random.choice(ENTRY_SIGNALS)
+    if sig_template is None:
+        sig_template = random.choice(ENTRY_SIGNALS)
     entry_signal = _resolve_block(sig_template)
 
     # EMAクロスの場合、short < long を保証
@@ -148,17 +229,30 @@ def generate_strategy_config(seed: int | None = None) -> dict:
 
 
 def generate_many(count: int, base_seed: int = 42) -> list[dict]:
-    """複数の戦略設定を一括生成"""
+    """複数の戦略設定を一括生成 (カテゴリ多様性を保証)"""
     configs = []
     names_seen = set()
     attempts = 0
     max_attempts = count * 5
 
+    categories = list(SIGNAL_CATEGORIES.keys())
+    n_categories = len(categories)
+    max_per_category = (count // n_categories) + 2  # 各カテゴリの上限
+
+    category_counts: dict[str, int] = {cat: 0 for cat in categories}
+
     while len(configs) < count and attempts < max_attempts:
         seed = base_seed + attempts
-        cfg = generate_strategy_config(seed=seed)
+        random.seed(seed)
+
+        # カテゴリバランスを考慮してシグナル選択
+        sig_template = _pick_signal_balanced(category_counts, max_per_category)
+        cfg = generate_strategy_config(seed=seed, sig_template=sig_template)
+
         if cfg["name"] not in names_seen:
             names_seen.add(cfg["name"])
+            cat = cfg["entry_signal"].get("category", "unknown")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
             configs.append(cfg)
         attempts += 1
 
@@ -175,7 +269,6 @@ def write_strategy_file(config: dict, output_dir: str) -> str:
     name = config["name"]
     filepath = os.path.join(output_dir, f"{name}.py")
 
-    # repr()を使ってPythonリテラルとして出力（True/Falseが正しく出る）
     import pprint
     config_repr = pprint.pformat(config, indent=4, width=100)
 
@@ -208,3 +301,12 @@ def generate_and_write(count: int, output_dir: str, base_seed: int = 42) -> list
         path = write_strategy_file(cfg, output_dir)
         paths.append(path)
     return paths
+
+
+def get_category_distribution(configs: list[dict]) -> dict[str, int]:
+    """戦略リストのカテゴリ分布を返す"""
+    dist: dict[str, int] = {}
+    for cfg in configs:
+        cat = cfg.get("entry_signal", {}).get("category", "unknown")
+        dist[cat] = dist.get(cat, 0) + 1
+    return dist

@@ -1,8 +1,11 @@
-"""FXスキャルピング戦略 自動研究工場 - メインエントリーポイント
+"""FXスキャルピング戦略 自動研究工場 v2 - メインエントリーポイント
 
 使い方:
-    python main.py              # 進化型研究ループ（デフォルト）
-    python main.py --single     # 単発バックテスト（既存戦略のみ）
+    python main.py                      # 進化型研究ループ（デフォルト）
+    python main.py --single             # 単発バックテスト
+    python main.py --rounds 10          # ラウンド数指定
+    python main.py --strategies 100     # ラウンドあたり戦略数指定
+    python main.py --import-mt          # MT4/MT5 CSVインポートのみ
 """
 
 import os
@@ -11,7 +14,7 @@ import argparse
 import logging
 import yaml
 
-from data_loader import discover_data_files
+from data_loader import discover_data_files, batch_convert_mt_csv
 from runner import run_all_backtests
 from report import create_ranking, save_ranking, save_all_results, print_summary
 
@@ -33,13 +36,35 @@ def load_settings(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def import_mt_data(settings: dict) -> None:
+    """MT4/MT5 CSVインポート"""
+    logger = logging.getLogger(__name__)
+    mt_dir = settings.get("mt_import_dir", "data/mt_import")
+    data_dir = settings.get("data_dir", "data/raw")
+
+    if not os.path.isdir(mt_dir):
+        logger.info(f"MT4/MT5インポートディレクトリが存在しません: {mt_dir}")
+        logger.info("ディレクトリを作成しました。MT4/MT5のCSVを配置してください。")
+        os.makedirs(mt_dir, exist_ok=True)
+        return
+
+    csv_files = [f for f in os.listdir(mt_dir) if f.endswith(".csv")]
+    if not csv_files:
+        logger.info(f"インポート対象CSVなし: {mt_dir}")
+        return
+
+    logger.info(f"MT4/MT5 CSV {len(csv_files)} 件をインポート中...")
+    converted = batch_convert_mt_csv(mt_dir, data_dir)
+    logger.info(f"インポート完了: {len(converted)} 件")
+
+
 def run_single_mode(settings: dict) -> None:
-    """単発バックテストモード（後方互換）"""
+    """単発バックテストモード"""
     logger = logging.getLogger(__name__)
 
     initial_balance = settings.get("initial_balance", 100000)
-    spread = settings.get("spread", 0.2)
-    commission = settings.get("commission", 0.01)
+    spread = settings.get("spread", 0.02)
+    commission = settings.get("commission", 0.005)
     data_dir = settings.get("data_dir", "data/raw")
     results_dir = settings.get("results_dir", "results")
     strategies_dir = settings.get("strategies_dir", "strategies/generated")
@@ -55,8 +80,8 @@ def run_single_mode(settings: dict) -> None:
         sys.exit(1)
 
     logger.info(f"データファイル数: {len(data_files)}")
-
     logger.info("バックテスト開始...")
+
     all_results = run_all_backtests(
         data_files=data_files,
         strategies_dir=strategies_dir,
@@ -87,10 +112,11 @@ def run_evolution_mode(settings: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FXスキャルピング戦略 自動研究工場")
+    parser = argparse.ArgumentParser(description="FXスキャルピング戦略 自動研究工場 v2")
     parser.add_argument("--single", action="store_true", help="単発バックテストモード")
     parser.add_argument("--rounds", type=int, default=None, help="研究ラウンド数を上書き")
     parser.add_argument("--strategies", type=int, default=None, help="ラウンドあたり戦略数を上書き")
+    parser.add_argument("--import-mt", action="store_true", help="MT4/MT5 CSVインポートのみ実行")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -108,6 +134,13 @@ def main() -> None:
     settings = load_settings(config_path)
     logger.info("設定を読み込みました")
 
+    # MT4/MT5データがあればインポート
+    import_mt_data(settings)
+
+    if args.import_mt:
+        logger.info("MT4/MT5インポートのみ完了")
+        return
+
     # コマンドライン引数で上書き
     if args.rounds is not None:
         settings.setdefault("research", {})["rounds"] = args.rounds
@@ -118,7 +151,7 @@ def main() -> None:
         logger.info("モード: 単発バックテスト")
         run_single_mode(settings)
     else:
-        logger.info("モード: 進化型研究ループ")
+        logger.info("モード: 進化型研究ループ v2")
         run_evolution_mode(settings)
 
 
