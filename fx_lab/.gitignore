@@ -1,3 +1,17 @@
 __pycache__/
 *.pyc
 logs/
+
+# 自動生成される戦略ファイル (毎回再生成される)
+strategies/generated/
+strategies/archived/
+
+# 実行結果 (毎回再生成される)
+results/generations/
+results/breakdown_by_*.csv
+results/out_of_sample_ranking.csv
+results/robustness_report.csv
+results/walk_forward_results.csv
+results/best/
+results/ranked/
+results/csv/
