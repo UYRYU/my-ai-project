@@ -40,7 +40,7 @@ DEMO_CLOB_PAGES: list[tuple[list[dict], str]] = [
                 "question": "Will Bitcoin be above $100,000 at 12:05 PM ET? (5-minute market)",
                 "market_slug": "btc-above-100k-5min-1205",
                 "active": True,
-                "end_date_iso": "2026-03-24T16:05:00Z",
+                "end_date_iso": "2026-04-10T16:05:00Z",
                 "volume": "52340.50",
                 "tokens": [
                     {"token_id": "71321045000001", "outcome": "Yes", "price": "0.62"},
@@ -52,7 +52,7 @@ DEMO_CLOB_PAGES: list[tuple[list[dict], str]] = [
                 "question": "Will Bitcoin be above $100,500 at 12:05 PM ET? (5-minute market)",
                 "market_slug": "btc-above-100500-5min-1205",
                 "active": True,
-                "end_date_iso": "2026-03-24T16:05:00Z",
+                "end_date_iso": "2026-04-10T16:05:00Z",
                 "volume": "31200.00",
                 "tokens": [
                     {"token_id": "71321045000003", "outcome": "Yes", "price": "0.35"},
@@ -64,7 +64,7 @@ DEMO_CLOB_PAGES: list[tuple[list[dict], str]] = [
                 "question": "Will BTC go up in the next 1-minute candle?",
                 "market_slug": "btc-1min-up-candle",
                 "active": True,
-                "end_date_iso": "2026-03-24T16:01:00Z",
+                "end_date_iso": "2026-04-05T16:01:00Z",
                 "volume": "8750.25",
                 "tokens": [
                     {"token_id": "88432045000001", "outcome": "Yes", "price": "0.51"},
