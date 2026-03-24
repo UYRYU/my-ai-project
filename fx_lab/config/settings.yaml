@@ -1,0 +1,23 @@
+symbols:
+  - USDJPY
+  - EURJPY
+  - GBPJPY
+
+timeframes:
+  - M1
+  - M5
+
+initial_balance: 100000
+
+spread: 0.2
+
+commission: 0.01
+
+ranking_filters:
+  min_pf: 1.2
+  max_drawdown_pct: 15.0
+  min_trades: 100
+
+data_dir: "data/raw"
+results_dir: "results"
+strategies_dir: "strategies/generated"
