@@ -1,0 +1,28 @@
+# ============================================================
+# Monitoring Sources Configuration
+# Add or edit sources to monitor for AI news
+# ============================================================
+sources:
+  - name: "OpenAI Blog"
+    platform: "web"
+    handle_or_url: "https://openai.com/blog"
+    enabled: true
+    priority: 1
+
+  - name: "Anthropic News"
+    platform: "web"
+    handle_or_url: "https://www.anthropic.com/news"
+    enabled: true
+    priority: 2
+
+  - name: "Google DeepMind Blog"
+    platform: "web"
+    handle_or_url: "https://deepmind.google/discover/blog/"
+    enabled: true
+    priority: 3
+
+  - name: "AI Twitter Placeholder"
+    platform: "x"
+    handle_or_url: "@placeholder_ai_account"
+    enabled: false
+    priority: 4

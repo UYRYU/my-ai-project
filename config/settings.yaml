@@ -1,0 +1,39 @@
+# ============================================================
+# Application Settings
+# All paths are relative to the project root
+# ============================================================
+
+# --- Similarity / Deduplication ---
+similarity:
+  threshold: 0.75        # 0.0–1.0: items above this score are flagged as duplicates
+  method: "cosine"       # "cosine" or "jaccard"
+  state_file: "data/state/processed_summaries.json"
+
+# --- X Post Generation ---
+x_posts:
+  count_per_source: 3    # Number of draft X posts to generate per article
+  max_length: 280        # Maximum character count
+  min_length: 100        # Minimum character count
+
+# --- note Draft Generation ---
+note:
+  include_free_section: true
+  include_paid_hint: true   # Add placeholder for paid deep-dive section
+
+# --- AI Model ---
+ai:
+  model: "claude-opus-4-6"
+  max_tokens: 2048
+  temperature: 0.7
+
+# --- Output Directories ---
+output:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  drafts_dir: "data/drafts"
+  logs_dir: "data/logs"
+  state_dir: "data/state"
+
+# --- Approval Queue ---
+approval_queue:
+  path: "data/state/approval_queue.json"
