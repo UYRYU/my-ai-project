@@ -1,4 +1,7 @@
-"""戦略の自動検出・バックテスト実行・評価"""
+"""戦略の自動検出・バックテスト実行・評価
+
+自動生成戦略（engine経由）と手動戦略の両方に対応。
+"""
 
 import os
 import sys
@@ -11,43 +14,17 @@ import pandas as pd
 from strategy_base import Strategy
 from metrics import evaluate_strategy
 from data_loader import load_ohlc
+from engine.strategy_loader import load_all_strategies
 
 logger = logging.getLogger(__name__)
 
 
 def discover_strategies(strategies_dir: str) -> list[type[Strategy]]:
-    """strategies_dir内の全.pyファイルからStrategyサブクラスを自動検出"""
-    strategy_classes = []
+    """strategies_dir内の全.pyファイルからStrategyサブクラスを自動検出
 
-    if not os.path.isdir(strategies_dir):
-        logger.warning(f"戦略ディレクトリが見つかりません: {strategies_dir}")
-        return strategy_classes
-
-    # strategies_dirの親をsys.pathに追加
-    parent_dir = os.path.dirname(os.path.abspath(strategies_dir))
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
-
-    for filename in sorted(os.listdir(strategies_dir)):
-        if not filename.endswith(".py") or filename.startswith("_"):
-            continue
-
-        module_name = filename.replace(".py", "")
-        module_path = f"strategies.generated.{module_name}"
-
-        try:
-            module = importlib.import_module(module_path)
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if (inspect.isclass(attr)
-                        and issubclass(attr, Strategy)
-                        and attr is not Strategy):
-                    strategy_classes.append(attr)
-                    logger.info(f"戦略を検出: {attr.name} ({filename})")
-        except Exception as e:
-            logger.error(f"戦略の読み込みに失敗 ({filename}): {e}")
-
-    return strategy_classes
+    engine.strategy_loader を使用した高信頼ローダー。
+    """
+    return load_all_strategies(strategies_dir)
 
 
 def run_backtest(

@@ -1,11 +1,13 @@
-"""FXスキャルピング戦略 研究工場 - メインエントリーポイント
+"""FXスキャルピング戦略 自動研究工場 - メインエントリーポイント
 
 使い方:
-    python main.py
+    python main.py              # 進化型研究ループ（デフォルト）
+    python main.py --single     # 単発バックテスト（既存戦略のみ）
 """
 
 import os
 import sys
+import argparse
 import logging
 import yaml
 
@@ -31,22 +33,9 @@ def load_settings(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def main() -> None:
-    # パスの基準をこのスクリプトのディレクトリにする
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(base_dir)
-
-    setup_logging("logs")
+def run_single_mode(settings: dict) -> None:
+    """単発バックテストモード（後方互換）"""
     logger = logging.getLogger(__name__)
-
-    # 設定読み込み
-    config_path = os.path.join("config", "settings.yaml")
-    if not os.path.exists(config_path):
-        logger.error(f"設定ファイルが見つかりません: {config_path}")
-        sys.exit(1)
-
-    settings = load_settings(config_path)
-    logger.info("設定を読み込みました")
 
     initial_balance = settings.get("initial_balance", 100000)
     spread = settings.get("spread", 0.2)
@@ -60,18 +49,13 @@ def main() -> None:
     max_dd_pct = ranking_filters.get("max_drawdown_pct", 15.0)
     min_trades = ranking_filters.get("min_trades", 100)
 
-    # データファイル検出
     data_files = discover_data_files(data_dir)
     if not data_files:
         logger.error(f"データファイルが見つかりません: {data_dir}")
-        logger.error("data/raw/ に USDJPY_M1.csv などのOHLCデータを配置してください")
         sys.exit(1)
 
     logger.info(f"データファイル数: {len(data_files)}")
-    for d in data_files:
-        logger.info(f"  {d['symbol']}_{d['timeframe']}: {d['filepath']}")
 
-    # バックテスト実行
     logger.info("バックテスト開始...")
     all_results = run_all_backtests(
         data_files=data_files,
@@ -85,19 +69,57 @@ def main() -> None:
         logger.warning("バックテスト結果がありません")
         sys.exit(1)
 
-    # 全結果保存
     csv_dir = os.path.join(results_dir, "csv")
     save_all_results(all_results, csv_dir)
 
-    # ランキング作成・保存
     ranking = create_ranking(all_results, min_pf=min_pf, max_dd_pct=max_dd_pct, min_trades=min_trades)
     ranked_dir = os.path.join(results_dir, "ranked")
     save_ranking(ranking, ranked_dir)
 
-    # サマリー表示
     print_summary(ranking, all_results)
-
     logger.info("完了")
+
+
+def run_evolution_mode(settings: dict) -> None:
+    """進化型研究ループモード"""
+    from engine.evolution import run_evolution
+    run_evolution(settings)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="FXスキャルピング戦略 自動研究工場")
+    parser.add_argument("--single", action="store_true", help="単発バックテストモード")
+    parser.add_argument("--rounds", type=int, default=None, help="研究ラウンド数を上書き")
+    parser.add_argument("--strategies", type=int, default=None, help="ラウンドあたり戦略数を上書き")
+    args = parser.parse_args()
+
+    # パスの基準をこのスクリプトのディレクトリにする
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(base_dir)
+
+    setup_logging("logs")
+    logger = logging.getLogger(__name__)
+
+    config_path = os.path.join("config", "settings.yaml")
+    if not os.path.exists(config_path):
+        logger.error(f"設定ファイルが見つかりません: {config_path}")
+        sys.exit(1)
+
+    settings = load_settings(config_path)
+    logger.info("設定を読み込みました")
+
+    # コマンドライン引数で上書き
+    if args.rounds is not None:
+        settings.setdefault("research", {})["rounds"] = args.rounds
+    if args.strategies is not None:
+        settings.setdefault("research", {})["strategies_per_round"] = args.strategies
+
+    if args.single:
+        logger.info("モード: 単発バックテスト")
+        run_single_mode(settings)
+    else:
+        logger.info("モード: 進化型研究ループ")
+        run_evolution_mode(settings)
 
 
 if __name__ == "__main__":

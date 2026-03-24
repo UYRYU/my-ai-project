@@ -21,3 +21,12 @@ ranking_filters:
 data_dir: "data/raw"
 results_dir: "results"
 strategies_dir: "strategies/generated"
+strategies_dir_base: "strategies"
+
+research:
+  rounds: 5
+  strategies_per_round: 50
+  top_k: 10
+  approved_pf: 1.35
+  approved_max_dd: 0.12
+  min_trades: 100

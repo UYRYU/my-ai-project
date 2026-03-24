@@ -1,0 +1,21 @@
+"""自動生成戦略: momentum_611477dd"""
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from engine.configurable_strategy import ConfigurableStrategy
+
+CONFIG = {   'entry_filters': [   {'end_hour': 23, 'start_hour': 9, 'type': 'time_filter'},
+                         {'max_atr': 0.467, 'min_atr': 0.0536, 'type': 'atr_filter'}],
+    'entry_signal': {'period': 12, 'type': 'momentum'},
+    'exit_rules': {   'atr_period': 14,
+                      'sl_atr_mult': 2.3255,
+                      'sl_type': 'atr_mult',
+                      'tp_atr_mult': 2.7872,
+                      'tp_type': 'atr_mult'},
+    'name': 'momentum_611477dd'}
+
+class GeneratedStrategy(ConfigurableStrategy):
+    name = "momentum_611477dd"
+
+    def __init__(self, spread: float = 0.2, commission: float = 0.01):
+        super().__init__(config=CONFIG, spread=spread, commission=commission)
