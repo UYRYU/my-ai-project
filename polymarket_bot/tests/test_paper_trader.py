@@ -17,7 +17,8 @@ from src.paper_trader import PaperTrader
 
 def make_config(**overrides) -> Config:
     defaults = {
-        "api_base": "https://clob.polymarket.com",
+        "gamma_api": "https://gamma-api.polymarket.com",
+        "clob_api": "https://clob.polymarket.com",
         "ws_url": "wss://example.com/ws",
         "paper_trade_size": 10.0,
         "paper_take_profit": 0.05,

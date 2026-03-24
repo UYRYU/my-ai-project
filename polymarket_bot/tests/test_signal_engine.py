@@ -9,7 +9,8 @@ from src.signal_engine import PriceHistory, SignalEngine
 
 def make_config(**overrides) -> Config:
     defaults = {
-        "api_base": "https://clob.polymarket.com",
+        "gamma_api": "https://gamma-api.polymarket.com",
+        "clob_api": "https://clob.polymarket.com",
         "ws_url": "wss://example.com/ws",
         "mispricing_threshold": 0.02,
         "spread_max": 0.10,

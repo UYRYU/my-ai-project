@@ -28,7 +28,8 @@ def _str(key: str, default: str = "") -> str:
 @dataclass(frozen=True)
 class Config:
     # API
-    api_base: str = ""
+    gamma_api: str = ""   # Market discovery (events, markets)
+    clob_api: str = ""    # Order books & trading
     ws_url: str = ""
 
     # Polling
@@ -80,7 +81,8 @@ def load_config(env_path: str | Path | None = None) -> Config:
             load_dotenv()
 
     return Config(
-        api_base=_str("POLYMARKET_API_BASE", "https://clob.polymarket.com"),
+        gamma_api=_str("POLYMARKET_GAMMA_API", "https://gamma-api.polymarket.com"),
+        clob_api=_str("POLYMARKET_CLOB_API", "https://clob.polymarket.com"),
         ws_url=_str("POLYMARKET_WS_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/market"),
         poll_interval_sec=_int("POLL_INTERVAL_SEC", 10),
         ws_reconnect_delay_sec=_int("WS_RECONNECT_DELAY_SEC", 5),

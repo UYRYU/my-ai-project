@@ -1,4 +1,8 @@
-"""Discover and fetch active BTC short-term markets from Polymarket CLOB API."""
+"""Discover and fetch active BTC short-term markets from Polymarket APIs.
+
+- Gamma API (gamma-api.polymarket.com): market/event discovery
+- CLOB API (clob.polymarket.com): order book data
+"""
 
 from __future__ import annotations
 
@@ -18,78 +22,97 @@ SHORT_TERM_KEYWORDS = ["5-minute", "5 minute", "5min", "1-minute", "1 minute", "
 
 
 class MarketDiscovery:
-    """Fetches active markets and order books from Polymarket CLOB API."""
+    """Fetches active markets from Gamma API, order books from CLOB API."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.base_url = config.api_base.rstrip("/")
-        self._client: Optional[httpx.AsyncClient] = None
+        self.gamma_url = config.gamma_api.rstrip("/")
+        self.clob_url = config.clob_api.rstrip("/")
+        self._gamma_client: Optional[httpx.AsyncClient] = None
+        self._clob_client: Optional[httpx.AsyncClient] = None
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self.base_url,
+    async def _get_gamma_client(self) -> httpx.AsyncClient:
+        if self._gamma_client is None or self._gamma_client.is_closed:
+            self._gamma_client = httpx.AsyncClient(
+                base_url=self.gamma_url,
                 timeout=httpx.Timeout(15.0),
                 headers={"Accept": "application/json"},
             )
-        return self._client
+        return self._gamma_client
+
+    async def _get_clob_client(self) -> httpx.AsyncClient:
+        if self._clob_client is None or self._clob_client.is_closed:
+            self._clob_client = httpx.AsyncClient(
+                base_url=self.clob_url,
+                timeout=httpx.Timeout(15.0),
+                headers={"Accept": "application/json"},
+            )
+        return self._clob_client
 
     async def close(self) -> None:
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        for client in (self._gamma_client, self._clob_client):
+            if client and not client.is_closed:
+                await client.aclose()
 
-    async def fetch_markets(self, next_cursor: str = "") -> tuple[list[dict], str]:
-        """Fetch markets from CLOB API /markets endpoint.
+    async def fetch_events(self, offset: int = 0, limit: int = 100) -> list[dict]:
+        """Fetch active events from Gamma API /events endpoint.
 
-        Returns (markets_list, next_cursor).
+        Events contain their associated markets, so this is the most
+        efficient way to discover all active markets (per Polymarket docs).
         """
-        client = await self._get_client()
-        params: dict = {"active": "true"}
-        if next_cursor:
-            params["next_cursor"] = next_cursor
+        client = await self._get_gamma_client()
+        params = {
+            "active": "true",
+            "closed": "false",
+            "limit": str(limit),
+            "offset": str(offset),
+            "order": "volume_24hr",
+            "ascending": "false",
+        }
 
         try:
-            resp = await client.get("/markets", params=params)
+            resp = await client.get("/events", params=params)
             resp.raise_for_status()
             data = resp.json()
-            # CLOB API returns {"data": [...], "next_cursor": "..."}
-            markets = data if isinstance(data, list) else data.get("data", data)
-            cursor = data.get("next_cursor", "") if isinstance(data, dict) else ""
-            return markets, cursor
+            return data if isinstance(data, list) else []
         except httpx.HTTPStatusError as e:
-            logger.error("HTTP error fetching markets: %s", e)
-            return [], ""
+            logger.error("HTTP error fetching events: %s", e)
+            return []
         except Exception as e:
-            logger.error("Error fetching markets: %s", e)
-            return [], ""
+            logger.error("Error fetching events: %s", e)
+            return []
 
     async def fetch_all_btc_short_term_markets(self) -> list[Market]:
-        """Paginate through all markets, filter for BTC short-term ones."""
+        """Paginate through Gamma API events, filter for BTC short-term markets."""
         all_markets: list[Market] = []
-        cursor = ""
-        page = 0
+        offset = 0
+        limit = 100
         max_pages = 20  # Safety limit
 
-        while page < max_pages:
-            raw_markets, cursor = await self.fetch_markets(cursor)
-            if not raw_markets:
+        for page in range(max_pages):
+            events = await self.fetch_events(offset=offset, limit=limit)
+            if not events:
                 break
 
-            for m in raw_markets:
-                market = self._parse_market(m)
-                if market and self._is_btc_short_term(market):
-                    all_markets.append(market)
+            for event in events:
+                # Each event can contain multiple markets
+                event_markets = event.get("markets", [])
+                for m in event_markets:
+                    market = self._parse_gamma_market(m)
+                    if market and self._is_btc_short_term(market):
+                        all_markets.append(market)
 
-            page += 1
-            if not cursor or cursor == "LTE":
+            # If we got fewer results than limit, we've reached the end
+            if len(events) < limit:
                 break
+            offset += limit
 
         logger.info("Found %d BTC short-term markets", len(all_markets))
         return all_markets
 
     async def fetch_order_book(self, token_id: str) -> OrderBookSnapshot:
-        """Fetch order book for a specific token."""
-        client = await self._get_client()
+        """Fetch order book for a specific token from CLOB API."""
+        client = await self._get_clob_client()
         try:
             resp = await client.get("/book", params={"token_id": token_id})
             resp.raise_for_status()
@@ -108,10 +131,21 @@ class MarketDiscovery:
             token.order_book = await self.fetch_order_book(token.token_id)
         return market
 
-    def _parse_market(self, raw: dict) -> Optional[Market]:
-        """Parse raw API response into Market model."""
+    def _parse_gamma_market(self, raw: dict) -> Optional[Market]:
+        """Parse Gamma API market response into Market model.
+
+        Gamma API market fields:
+        - condition_id, question, slug, active, end_date_iso
+        - tokens: [{token_id, outcome, price}, ...]
+        - volume, volume_24hr
+        """
         try:
             tokens_raw = raw.get("tokens", [])
+            if isinstance(tokens_raw, str):
+                # Some responses return tokens as JSON string
+                import json
+                tokens_raw = json.loads(tokens_raw)
+
             tokens = []
             for t in tokens_raw:
                 tokens.append(
@@ -129,14 +163,14 @@ class MarketDiscovery:
                 tokens=tokens,
                 active=raw.get("active", True),
                 end_date=raw.get("end_date_iso", raw.get("end_date", "")),
-                volume=float(raw.get("volume", 0)),
+                volume=float(raw.get("volume", 0) or 0),
             )
         except Exception as e:
             logger.debug("Failed to parse market: %s", e)
             return None
 
     def _parse_order_book(self, data: dict) -> OrderBookSnapshot:
-        """Parse order book response."""
+        """Parse CLOB API order book response."""
         bids = []
         asks = []
         for b in data.get("bids", []):
