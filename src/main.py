@@ -4,6 +4,8 @@ Usage:
   python src/main.py           # Run full pipeline (fetch → generate → queue)
   python src/main.py --approve # Interactively review pending queue items
   python src/main.py --export  # Export approved items to files
+  python src/main.py --post    # Post approved X drafts to X (Twitter)
+  python src/main.py --dry-run # Preview posts without actually posting
   python src/main.py --all     # Run pipeline then approve then export
 """
 from __future__ import annotations
@@ -40,6 +42,7 @@ from generate.note_writer import generate_note_draft
 from review.approval_queue import ApprovalQueue, run_interactive_review
 from publish.export_x_posts import export_approved_x_posts
 from publish.export_note_md import export_approved_notes
+from publish.post_to_x import post_approved_x_posts
 from utils.fileio import read_yaml, write_json, ensure_dir
 from utils.logger import setup_logger
 
@@ -208,6 +211,12 @@ def run_export(settings: dict) -> None:
         print("\n出力する承認済みアイテムがありません。--approve で承認してください。")
 
 
+def run_post(settings: dict, dry_run: bool = False) -> None:
+    queue = ApprovalQueue(_queue_path(settings))
+    state_file = PROJECT_ROOT / "data" / "state" / "posted_x.json"
+    post_approved_x_posts(queue, state_file=state_file, dry_run=dry_run)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -221,6 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  python src/main.py            # フルパイプライン実行\n"
             "  python src/main.py --approve  # 承認キューのレビュー\n"
             "  python src/main.py --export   # 承認済みアイテムのエクスポート\n"
+            "  python src/main.py --post     # 承認済みX投稿案を実際に投稿\n"
+            "  python src/main.py --dry-run  # 投稿内容をプレビュー（実投稿なし）\n"
             "  python src/main.py --all      # パイプライン→承認→エクスポート\n"
         ),
     )
@@ -239,6 +250,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="パイプライン・承認・エクスポートをまとめて実行する",
     )
+    parser.add_argument(
+        "--post",
+        action="store_true",
+        help="承認済みX投稿案をX (Twitter) に投稿する",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="実際には投稿せず、投稿内容をプレビューする (--post と併用)",
+    )
     return parser
 
 
@@ -255,6 +276,8 @@ def main() -> None:
         run_approve(settings)
     elif args.export:
         run_export(settings)
+    elif args.post or args.dry_run:
+        run_post(settings, dry_run=args.dry_run)
     else:
         run_pipeline(settings)
 
