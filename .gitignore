@@ -21,6 +21,8 @@ data/raw/*.json
 data/processed/*.json
 data/state/approval_queue.json
 data/state/processed_summaries.json
+data/drafts/x_posts/
+data/drafts/notes/
 
 # OS
 .DS_Store
