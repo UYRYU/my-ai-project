@@ -184,113 +184,184 @@ class ConfigurableStrategy(Strategy):
         return df
 
     # ----------------------------------------------------------------
-    # エントリー
+    # エントリー / エグジット (互換用 - 高速バックテストで使わない)
     # ----------------------------------------------------------------
     def entry_logic(self, row: pd.Series, position: dict | None) -> dict | None:
-        if position is not None:
+        if position is not None or row["signal"] == 0:
             return None
-        if row["signal"] == 0:
-            return None
-
-        direction = "long" if row["signal"] == 1 else "short"
-        entry_price = row["close"]
-        atr = row.get("atr", 0.1)
-
-        pos = {
-            "direction": direction,
-            "entry_price": entry_price,
+        return {
+            "direction": "long" if row["signal"] == 1 else "short",
+            "entry_price": row["close"],
             "entry_time": row["timestamp"],
-            "atr_at_entry": atr,
-            "bars_held": 0,
-            "best_price": entry_price,
         }
 
-        # TP/SL計算
+    def exit_logic(self, row: pd.Series, position: dict) -> bool:
+        return row["signal"] != 0 and row["signal"] != (1 if position["direction"] == "long" else -1)
+
+    # ----------------------------------------------------------------
+    # 高速バックテスト (NumPy配列ベース)
+    # ----------------------------------------------------------------
+    def backtest(self, df: pd.DataFrame, initial_balance: float = 100000) -> list["Trade"]:
+        from strategy_base import Trade
+
+        df = self.generate_signal(df)
+        n = len(df)
+        if n == 0:
+            return []
+
+        # NumPy配列に変換（iterrows を完全回避）
+        signals = df["signal"].values
+        closes = df["close"].values
+        highs = df["high"].values
+        lows = df["low"].values
+        timestamps = df["timestamp"].values
+        atrs = df["atr"].values if "atr" in df.columns else np.full(n, 0.1)
+
         rules = self.exit_rules
+        spread_cost = self.spread
+        commission_cost = self.commission * 2
+
+        # TP/SL パラメータ
         tp_type = rules.get("tp_type", "fixed")
         sl_type = rules.get("sl_type", "fixed")
+        tp_pips = rules.get("tp_pips", 0.3)
+        tp_atr_mult = rules.get("tp_atr_mult", 2.0)
+        sl_pips = rules.get("sl_pips", 0.2)
+        sl_atr_mult = rules.get("sl_atr_mult", 1.5)
+        max_bars = int(rules.get("max_bars", 0))
+        reverse_exit = bool(rules.get("reverse_signal_exit", False))
+        use_trailing = bool(rules.get("trailing", False))
+        use_breakeven = bool(rules.get("breakeven", False))
 
-        if tp_type == "fixed":
-            tp_pips = rules.get("tp_pips", 0.3)
-            pos["tp"] = entry_price + tp_pips if direction == "long" else entry_price - tp_pips
-        elif tp_type == "atr_mult":
-            tp_mult = rules.get("tp_atr_mult", 2.0)
-            pos["tp"] = entry_price + atr * tp_mult if direction == "long" else entry_price - atr * tp_mult
+        # トレーリング設定
+        trail_type = rules.get("trail_type", "fixed")
+        trail_distance_fixed = rules.get("trail_distance", 0.2)
+        trail_atr_mult = rules.get("trail_atr_mult", 1.0)
+        be_trigger = rules.get("be_trigger_pips", 0.15)
 
-        if sl_type == "fixed":
-            sl_pips = rules.get("sl_pips", 0.2)
-            pos["sl"] = entry_price - sl_pips if direction == "long" else entry_price + sl_pips
-        elif sl_type == "atr_mult":
-            sl_mult = rules.get("sl_atr_mult", 1.5)
-            pos["sl"] = entry_price - atr * sl_mult if direction == "long" else entry_price + atr * sl_mult
+        trades = []
+        i = 0
 
-        return pos
+        while i < n:
+            # シグナル探索
+            sig = signals[i]
+            if sig == 0:
+                i += 1
+                continue
 
-    # ----------------------------------------------------------------
-    # エグジット
-    # ----------------------------------------------------------------
-    def exit_logic(self, row: pd.Series, position: dict) -> bool:
-        rules = self.exit_rules
-        direction = position["direction"]
-        position["bars_held"] = position.get("bars_held", 0) + 1
+            # エントリー
+            direction = 1 if sig == 1 else -1  # 1=long, -1=short
+            entry_price = closes[i]
+            entry_time = timestamps[i]
+            atr_entry = atrs[i]
 
-        price = row["close"]
-        high = row["high"]
-        low = row["low"]
-
-        # TP判定
-        tp = position.get("tp")
-        if tp is not None:
-            if direction == "long" and high >= tp:
-                return True
-            if direction == "short" and low <= tp:
-                return True
-
-        # SL判定
-        sl = position.get("sl")
-        if sl is not None:
-            if direction == "long" and low <= sl:
-                return True
-            if direction == "short" and high >= sl:
-                return True
-
-        # 建値移動 (breakeven)
-        if rules.get("breakeven", False):
-            be_trigger = rules.get("be_trigger_pips", 0.15)
-            if direction == "long" and price >= position["entry_price"] + be_trigger:
-                position["sl"] = position["entry_price"] + 0.01
-            elif direction == "short" and price <= position["entry_price"] - be_trigger:
-                position["sl"] = position["entry_price"] - 0.01
-
-        # トレーリングストップ
-        if rules.get("trailing", False):
-            trail_dist = rules.get("trail_distance", 0.2)
-            atr = position.get("atr_at_entry", 0.1)
-            trail_type = rules.get("trail_type", "fixed")
-            if trail_type == "atr_mult":
-                trail_dist = atr * rules.get("trail_atr_mult", 1.0)
-
-            best = position.get("best_price", position["entry_price"])
-            if direction == "long":
-                if price > best:
-                    position["best_price"] = price
-                    position["sl"] = max(position.get("sl", 0), price - trail_dist)
+            # TP/SL計算
+            if tp_type == "fixed":
+                tp_dist = tp_pips
             else:
-                if price < best:
-                    position["best_price"] = price
-                    position["sl"] = min(position.get("sl", float("inf")), price + trail_dist)
+                tp_dist = atr_entry * tp_atr_mult
 
-        # 時間切れ決済
-        max_bars = rules.get("max_bars", 0)
-        if max_bars > 0 and position["bars_held"] >= max_bars:
-            return True
+            if sl_type == "fixed":
+                sl_dist = sl_pips
+            else:
+                sl_dist = atr_entry * sl_atr_mult
 
-        # 逆シグナル決済
-        if rules.get("reverse_signal_exit", False):
-            sig = row.get("signal", 0)
-            if direction == "long" and sig == -1:
-                return True
-            if direction == "short" and sig == 1:
-                return True
+            if direction == 1:
+                tp_level = entry_price + tp_dist
+                sl_level = entry_price - sl_dist
+            else:
+                tp_level = entry_price - tp_dist
+                sl_level = entry_price + sl_dist
 
-        return False
+            # トレーリング用
+            best_price = entry_price
+            if use_trailing:
+                if trail_type == "atr_mult":
+                    t_dist = atr_entry * trail_atr_mult
+                else:
+                    t_dist = trail_distance_fixed
+
+            # エグジット探索
+            bars_held = 0
+            j = i + 1
+            exited = False
+            while j < n:
+                bars_held += 1
+                h = highs[j]
+                l = lows[j]
+                c = closes[j]
+
+                # TP判定
+                if direction == 1 and h >= tp_level:
+                    exited = True
+                    break
+                if direction == -1 and l <= tp_level:
+                    exited = True
+                    break
+
+                # SL判定
+                if direction == 1 and l <= sl_level:
+                    exited = True
+                    break
+                if direction == -1 and h >= sl_level:
+                    exited = True
+                    break
+
+                # 建値移動
+                if use_breakeven:
+                    if direction == 1 and c >= entry_price + be_trigger:
+                        sl_level = max(sl_level, entry_price + 0.01)
+                    elif direction == -1 and c <= entry_price - be_trigger:
+                        sl_level = min(sl_level, entry_price - 0.01)
+
+                # トレーリング
+                if use_trailing:
+                    if direction == 1:
+                        if c > best_price:
+                            best_price = c
+                            sl_level = max(sl_level, c - t_dist)
+                    else:
+                        if c < best_price:
+                            best_price = c
+                            sl_level = min(sl_level, c + t_dist)
+
+                # 時間切れ
+                if max_bars > 0 and bars_held >= max_bars:
+                    exited = True
+                    break
+
+                # 逆シグナル
+                if reverse_exit:
+                    s = signals[j]
+                    if direction == 1 and s == -1:
+                        exited = True
+                        break
+                    if direction == -1 and s == 1:
+                        exited = True
+                        break
+
+                j += 1
+
+            if exited:
+                exit_price = closes[j]
+                exit_time = timestamps[j]
+                if direction == 1:
+                    raw_pnl = exit_price - entry_price
+                else:
+                    raw_pnl = entry_price - exit_price
+                pnl = raw_pnl - spread_cost - commission_cost
+
+                trades.append(Trade(
+                    entry_time=pd.Timestamp(entry_time),
+                    exit_time=pd.Timestamp(exit_time),
+                    direction="long" if direction == 1 else "short",
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    pnl=pnl,
+                ))
+                i = j + 1
+            else:
+                i = j if j < n else j
+                break
+
+        return trades
