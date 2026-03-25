@@ -125,6 +125,7 @@ def main() -> None:
     parser.add_argument("--phase2", action="store_true", help="有望シグナル集中探索Phase2")
     parser.add_argument("--phase3", action="store_true", help="atr_break集中砲撃+WF検証Phase3")
     parser.add_argument("--final", action="store_true", help="最終候補プロファイル+EA生成")
+    parser.add_argument("--validate", action="store_true", help="最終候補長期検証")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -155,7 +156,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.final:
+    if args.validate:
+        logger.info("モード: 最終候補長期検証")
+        from long_term_validation import run_long_term
+        run_long_term(settings)
+    elif args.final:
         logger.info("モード: 最終候補プロファイル+EA生成")
         from final_profile import run_final_profile
         run_final_profile(settings)
