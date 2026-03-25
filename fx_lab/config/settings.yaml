@@ -43,3 +43,9 @@ research:
 
   # Walk-Forward窓数
   wf_windows: 3
+
+# 深掘り探索 (--explore) 用フィルタ
+exploration:
+  min_pf: 1.00
+  max_dd_pct: 20.0
+  min_trades: 300
