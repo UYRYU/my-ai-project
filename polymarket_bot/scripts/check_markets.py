@@ -243,24 +243,24 @@ async def run_live() -> None:
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
 
-    # Debug: show all date-related fields from raw API response
-    if btc_all:
-        print(f"\n  [DEBUG] BTC市場の日付フィールド確認 (最初3件):")
-        for di, m in enumerate(btc_all[:3]):
-            q = (m.get("question") or "")[:50]
-            date_fields = {
-                k: v for k, v in m.items()
-                if any(x in k.lower() for x in ["date", "end", "expir", "close"])
-            }
-            print(f"    #{di+1} {q}")
-            print(f"         date fields: {date_fields}")
-            print(f"         is_short_term={is_short_term(m)}")
-
     btc_short = [m for m in btc_all if is_short_term(m)]
 
     print(f"\n  全ユニーク市場:          {len(unique_raw)}")
     print(f"  BTC関連:                 {len(btc_all)}")
     print(f"  BTC関連 + 短期:          {len(btc_short)}")
+
+    # Show ALL BTC markets with their date info
+    if btc_all:
+        print(f"\n  ┌─ BTC関連 全{len(btc_all)}件の詳細 ─┐")
+        for di, m in enumerate(btc_all, 1):
+            q = (m.get("question") or "")[:70]
+            end1 = m.get("end_date_iso", "")
+            end2 = m.get("end_date", "")
+            end3 = m.get("closed", "")
+            short = is_short_term(m)
+            tag = "★短期" if short else "  長期/期限切れ"
+            print(f"  {di:2d}. [{tag}] {q}")
+            print(f"      end_date_iso={end1!r}  end_date={end2!r}  closed={end3!r}")
 
     display = btc_all if btc_all else unique_raw[:10]
     label = "BTC関連市場" if btc_all else "全市場サンプル (BTC見つからず)"
