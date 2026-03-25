@@ -119,6 +119,7 @@ def main() -> None:
     parser.add_argument("--import-mt", action="store_true", help="MT4/MT5 CSVインポートのみ実行")
     parser.add_argument("--explore", action="store_true", help="RSI逆張り深掘り探索モード")
     parser.add_argument("--explore-struct", action="store_true", help="RSI+構造フィルタ深掘り探索モード")
+    parser.add_argument("--scalp", action="store_true", help="M1スキャルピング探索モード")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -149,7 +150,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.explore_struct:
+    if args.scalp:
+        logger.info("モード: M1スキャルピング探索")
+        from explore_m1_scalp import run_m1_scalp_exploration
+        run_m1_scalp_exploration(settings)
+    elif args.explore_struct:
         logger.info("モード: RSI+構造フィルタ深掘り探索")
         from explore_rsi_structure import run_structure_exploration
         run_structure_exploration(settings)
