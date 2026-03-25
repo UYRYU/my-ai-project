@@ -121,6 +121,7 @@ def main() -> None:
     parser.add_argument("--explore-struct", action="store_true", help="RSI+構造フィルタ深掘り探索モード")
     parser.add_argument("--scalp", action="store_true", help="M1スキャルピング探索モード")
     parser.add_argument("--scalp-ecn", action="store_true", help="ECN口座前提M1スキャル探索")
+    parser.add_argument("--all-signals", action="store_true", help="全シグナルタイプ総動員M1探索")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -151,7 +152,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.scalp_ecn:
+    if args.all_signals:
+        logger.info("モード: 全シグナルタイプ総動員M1探索")
+        from explore_all_signals import run_all_signals
+        run_all_signals(settings)
+    elif args.scalp_ecn:
         logger.info("モード: ECN口座前提M1スキャル探索")
         from explore_m1_ecn import run_ecn_scalp
         run_ecn_scalp(settings)
