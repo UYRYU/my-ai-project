@@ -9,11 +9,16 @@ timeframes:
 
 initial_balance: 100000
 
-# スプレッド (円建てペアの場合: 0.02 = 2銭 ≈ 2pips)
-spread: 0.02
+# === コスト前提 ===
+# デフォルト: リテール口座 (従来互換)
+spread: 0.02              # 2pips (リテール)
+commission: 0.005          # 片道0.5pips (リテール)
 
-# 手数料 (片道、円建て)
-commission: 0.005
+# ECN口座前提 (--scalp-ecn で使用)
+ecn:
+  spread: 0.003            # 0.3pips
+  commission: 0.0025       # 片道0.25pips (往復0.5pips)
+  # 合計コスト: 0.3 + 0.5 = 0.8pips/trade
 
 ranking_filters:
   min_pf: 1.2
