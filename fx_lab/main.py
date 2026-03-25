@@ -122,6 +122,7 @@ def main() -> None:
     parser.add_argument("--scalp", action="store_true", help="M1スキャルピング探索モード")
     parser.add_argument("--scalp-ecn", action="store_true", help="ECN口座前提M1スキャル探索")
     parser.add_argument("--all-signals", action="store_true", help="全シグナルタイプ総動員M1探索")
+    parser.add_argument("--phase2", action="store_true", help="有望シグナル集中探索Phase2")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -152,7 +153,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.all_signals:
+    if args.phase2:
+        logger.info("モード: 有望シグナル集中探索Phase2")
+        from explore_phase2 import run_phase2
+        run_phase2(settings)
+    elif args.all_signals:
         logger.info("モード: 全シグナルタイプ総動員M1探索")
         from explore_all_signals import run_all_signals
         run_all_signals(settings)
