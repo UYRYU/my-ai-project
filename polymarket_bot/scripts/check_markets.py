@@ -266,11 +266,11 @@ async def run_live() -> None:
     combined_raw.extend(gamma_btc_markets)
     combined_raw.extend(all_clob_raw)
 
-    # Deduplicate by condition_id and filter out closed/inactive markets
+    # Deduplicate by condition_id and filter out closed/expired markets
     seen: set[str] = set()
     unique_raw: list[dict] = []
     skipped_closed = 0
-    skipped_inactive = 0
+    skipped_expired = 0
     for m in combined_raw:
         cid = m.get("condition_id", "")
         if cid and cid not in seen:
@@ -278,11 +278,18 @@ async def run_live() -> None:
             if m.get("closed") is True:
                 skipped_closed += 1
                 continue
-            if m.get("active") is False:
-                skipped_inactive += 1
-                continue
+            # Filter by end_date: skip markets with end_date in the past
+            end_str = m.get("end_date_iso") or m.get("end_date") or ""
+            if end_str and end_str != "N/A":
+                try:
+                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                    if end_dt < datetime.now(end_dt.tzinfo):
+                        skipped_expired += 1
+                        continue
+                except (ValueError, TypeError):
+                    pass
             unique_raw.append(m)
-    print(f"  フィルタ: closed={skipped_closed}件除外, inactive={skipped_inactive}件除外")
+    print(f"  フィルタ: closed={skipped_closed}件除外, expired={skipped_expired}件除外")
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
 
