@@ -242,9 +242,23 @@ async def run_live() -> None:
             unique_raw.append(m)
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
+
+    # Debug: show all date-related fields from raw API response
+    if btc_all:
+        print(f"\n  [DEBUG] BTC市場の日付フィールド確認 (最初3件):")
+        for di, m in enumerate(btc_all[:3]):
+            q = (m.get("question") or "")[:50]
+            date_fields = {
+                k: v for k, v in m.items()
+                if any(x in k.lower() for x in ["date", "end", "expir", "close"])
+            }
+            print(f"    #{di+1} {q}")
+            print(f"         date fields: {date_fields}")
+            print(f"         is_short_term={is_short_term(m)}")
+
     btc_short = [m for m in btc_all if is_short_term(m)]
 
-    print(f"  全ユニーク市場:          {len(unique_raw)}")
+    print(f"\n  全ユニーク市場:          {len(unique_raw)}")
     print(f"  BTC関連:                 {len(btc_all)}")
     print(f"  BTC関連 + 短期:          {len(btc_short)}")
 
