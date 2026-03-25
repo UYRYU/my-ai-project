@@ -200,12 +200,12 @@ async def run_live() -> None:
         first_ev = events[0]
         print(f"  sample event: {first_ev.get('title','?')[:60]}")
 
-    # ── Step 2: CLOB API ──
-    print("\n[2/4] CLOB API /markets (first 2 pages) ...")
+    # ── Step 2: CLOB API (active only) ──
+    print("\n[2/4] CLOB API /markets (active=true, up to 10 pages) ...")
     all_clob_raw: list[dict] = []
     cursor = "MA=="
-    for page_i in range(2):
-        page_data, cursor = await discovery.fetch_clob_markets(cursor)
+    for page_i in range(10):
+        page_data, cursor = await discovery.fetch_clob_markets(cursor, active=True)
         all_clob_raw.extend(page_data)
         print(f"  page {page_i+1}: {len(page_data)} markets  next_cursor={cursor[:12]}{'...' if len(cursor)>12 else ''}")
         if cursor == "LTE" or not page_data:
@@ -232,13 +232,16 @@ async def run_live() -> None:
             combined_raw.extend(ev.get("markets", []))
     combined_raw.extend(all_clob_raw)
 
-    # Deduplicate by condition_id
+    # Deduplicate by condition_id and filter out closed markets
     seen: set[str] = set()
     unique_raw: list[dict] = []
     for m in combined_raw:
         cid = m.get("condition_id", "")
         if cid and cid not in seen:
             seen.add(cid)
+            # Skip closed markets
+            if m.get("closed") is True:
+                continue
             unique_raw.append(m)
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]

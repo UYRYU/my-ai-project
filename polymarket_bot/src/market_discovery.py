@@ -91,13 +91,18 @@ class MarketDiscovery:
 
     # ── CLOB API: /markets (cursor-paginated) ──
 
-    async def fetch_clob_markets(self, next_cursor: str = "MA==") -> tuple[list[dict], str]:
+    async def fetch_clob_markets(
+        self, next_cursor: str = "MA==", *, active: bool = False,
+    ) -> tuple[list[dict], str]:
         """Fetch one page of markets from CLOB API.
 
         Returns (markets_list, next_cursor).  Cursor "LTE" means no more pages.
         """
         client = await self._get_clob_client()
         params: dict[str, str] = {"next_cursor": next_cursor}
+        if active:
+            params["active"] = "true"
+            params["closed"] = "false"
         try:
             resp = await client.get("/markets", params=params)
             resp.raise_for_status()
@@ -153,7 +158,7 @@ class MarketDiscovery:
         cursor = "MA=="
 
         for _ in range(50):  # CLOB pages can be small
-            raw_list, cursor = await self.fetch_clob_markets(cursor)
+            raw_list, cursor = await self.fetch_clob_markets(cursor, active=True)
             if not raw_list:
                 break
             for m in raw_list:
