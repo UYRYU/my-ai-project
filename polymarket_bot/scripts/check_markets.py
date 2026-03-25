@@ -190,7 +190,7 @@ async def run_live() -> None:
     print(DIV)
 
     # ── Step 1: Gamma API ──
-    print("\n[1/4] Gamma API /events ...")
+    print("\n[1/5] Gamma API /events ...")
     events = await discovery.fetch_events(offset=0, limit=10)
     gamma_ok = bool(events)
     gamma_market_count = sum(len(e.get("markets", [])) for e in events)
@@ -199,9 +199,42 @@ async def run_live() -> None:
     if gamma_ok:
         first_ev = events[0]
         print(f"  sample event: {first_ev.get('title','?')[:60]}")
+    else:
+        # Debug: try raw HTTP to see the error
+        import httpx as _httpx
+        try:
+            async with _httpx.AsyncClient(timeout=10) as _c:
+                _r = await _c.get(f"{config.gamma_api}/events", params={"active": "true", "limit": "1"})
+                print(f"  [DEBUG] HTTP {_r.status_code}  body={_r.text[:200]}")
+        except Exception as _e:
+            print(f"  [DEBUG] connection error: {_e}")
 
-    # ── Step 2: CLOB API (active only) ──
-    print("\n[2/4] CLOB API /markets (active=true, up to 10 pages) ...")
+    # ── Step 1b: Gamma API /markets (BTC search) ──
+    print("\n[2/5] Gamma API /markets (tag=crypto, BTC search) ...")
+    gamma_btc_markets: list[dict] = []
+    try:
+        gamma_client = await discovery._get_gamma_client()
+        for search_tag in ["Bitcoin", "BTC"]:
+            resp = await gamma_client.get("/markets", params={
+                "active": "true",
+                "closed": "false",
+                "tag": "crypto",
+                "limit": "100",
+            })
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    gamma_btc_markets.extend(data)
+                    print(f"  tag=crypto: {len(data)} markets")
+                break
+            else:
+                print(f"  HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"  error: {e}")
+    print(f"  Gamma /markets total: {len(gamma_btc_markets)}")
+
+    # ── Step 3: CLOB API (active only) ──
+    print("\n[3/5] CLOB API /markets (active=true, up to 10 pages) ...")
     all_clob_raw: list[dict] = []
     cursor = "MA=="
     for page_i in range(10):
@@ -220,29 +253,36 @@ async def run_live() -> None:
         await discovery.close()
         return
 
-    # ── Step 3: BTC filtering ──
-    print(f"\n[3/4] BTC短期市場を抽出 ...")
+    # ── Step 4: BTC filtering ──
+    print(f"\n[4/5] BTC短期市場を抽出 ...")
     print(f"  BTC keywords:     {BTC_KEYWORDS}")
     print(f"  短期判定:         end_date が {SHORT_TERM_MAX_DAYS}日以内")
 
-    # Collect raw markets from both sources
+    # Collect raw markets from all sources
     combined_raw: list[dict] = []
     if gamma_ok:
         for ev in events:
             combined_raw.extend(ev.get("markets", []))
+    combined_raw.extend(gamma_btc_markets)
     combined_raw.extend(all_clob_raw)
 
-    # Deduplicate by condition_id and filter out closed markets
+    # Deduplicate by condition_id and filter out closed/inactive markets
     seen: set[str] = set()
     unique_raw: list[dict] = []
+    skipped_closed = 0
+    skipped_inactive = 0
     for m in combined_raw:
         cid = m.get("condition_id", "")
         if cid and cid not in seen:
             seen.add(cid)
-            # Skip closed markets
             if m.get("closed") is True:
+                skipped_closed += 1
+                continue
+            if m.get("active") is False:
+                skipped_inactive += 1
                 continue
             unique_raw.append(m)
+    print(f"  フィルタ: closed={skipped_closed}件除外, inactive={skipped_inactive}件除外")
 
     btc_all = [m for m in unique_raw if is_btc((m.get("question") or "").lower())]
 
@@ -274,8 +314,8 @@ async def run_live() -> None:
     if len(display) > 20:
         print(f"\n  ... 他 {len(display)-20} 件省略")
 
-    # ── Step 4: Order book test ──
-    print(f"\n[4/4] CLOB API /book テスト ...")
+    # ── Step 5: Order book test ──
+    print(f"\n[5/5] CLOB API /book テスト ...")
     test_token = None
     test_q = ""
     for m in (btc_short or btc_all or unique_raw[:5]):
