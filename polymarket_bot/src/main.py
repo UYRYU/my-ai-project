@@ -68,7 +68,7 @@ class Bot:
             await self._discover_markets()
 
             if not self._markets:
-                self.logger.warning("No BTC short-term markets found. Will keep polling...")
+                self.logger.warning("No active markets found. Will keep polling...")
 
             # Start WS and polling concurrently
             await asyncio.gather(
@@ -104,9 +104,9 @@ class Bot:
         await self.discovery.close()
 
     async def _discover_markets(self) -> None:
-        """Discover BTC short-term markets."""
-        self.logger.info("Discovering BTC short-term markets...")
-        markets = await self.discovery.fetch_all_btc_short_term_markets()
+        """Discover all active markets and enrich with order books."""
+        self.logger.info("Discovering active markets...")
+        markets = await self.discovery.fetch_active_markets()
 
         for market in markets:
             self._markets[market.condition_id] = market

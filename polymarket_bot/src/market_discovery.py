@@ -1,9 +1,7 @@
-"""Discover and fetch active BTC short-term markets from Polymarket APIs.
+"""Discover and fetch active markets from Polymarket CLOB API.
 
-Two data sources (tried in order):
-1. Gamma API (gamma-api.polymarket.com/events) — richest data, but may 403
-2. CLOB API  (clob.polymarket.com/markets)      — always available, cursor-paginated
-Order books always come from CLOB API /book.
+Scans ALL active markets for mispricing opportunities.
+No keyword filtering — any market with YES+NO ask sum deviating from 1.0 is a candidate.
 """
 
 from __future__ import annotations
@@ -20,32 +18,16 @@ from .models import Market, MarketToken, OrderBookLevel, OrderBookSnapshot
 
 logger = logging.getLogger("polymarket_bot")
 
-# Keywords to identify BTC-related markets
-BTC_KEYWORDS = ["btc", "bitcoin"]
-# Maximum days until end_date to qualify as "short-term"
-SHORT_TERM_MAX_DAYS = 30
-
 
 class MarketDiscovery:
-    """Fetches active markets and order books from Polymarket APIs."""
+    """Fetches active markets and order books from Polymarket CLOB API."""
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.gamma_url = config.gamma_api.rstrip("/")
         self.clob_url = config.clob_api.rstrip("/")
-        self._gamma_client: Optional[httpx.AsyncClient] = None
         self._clob_client: Optional[httpx.AsyncClient] = None
 
-    # ── HTTP clients ──
-
-    async def _get_gamma_client(self) -> httpx.AsyncClient:
-        if self._gamma_client is None or self._gamma_client.is_closed:
-            self._gamma_client = httpx.AsyncClient(
-                base_url=self.gamma_url,
-                timeout=httpx.Timeout(15.0),
-                headers={"Accept": "application/json"},
-            )
-        return self._gamma_client
+    # ── HTTP client ──
 
     async def _get_clob_client(self) -> httpx.AsyncClient:
         if self._clob_client is None or self._clob_client.is_closed:
@@ -57,57 +39,24 @@ class MarketDiscovery:
         return self._clob_client
 
     async def close(self) -> None:
-        for client in (self._gamma_client, self._clob_client):
-            if client and not client.is_closed:
-                await client.aclose()
-
-    # ── Gamma API: /events ──
-
-    async def fetch_events(self, offset: int = 0, limit: int = 100) -> list[dict]:
-        """Fetch active events from Gamma API /events.
-
-        Returns raw event dicts, each containing a "markets" list.
-        """
-        client = await self._get_gamma_client()
-        params = {
-            "active": "true",
-            "closed": "false",
-            "limit": str(limit),
-            "offset": str(offset),
-            "order": "volume_24hr",
-            "ascending": "false",
-        }
-        try:
-            resp = await client.get("/events", params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            return data if isinstance(data, list) else []
-        except httpx.HTTPStatusError as e:
-            logger.warning("Gamma API /events HTTP %s", e.response.status_code)
-            return []
-        except Exception as e:
-            logger.warning("Gamma API /events error: %s", e)
-            return []
+        if self._clob_client and not self._clob_client.is_closed:
+            await self._clob_client.aclose()
 
     # ── CLOB API: /markets (cursor-paginated) ──
 
     async def fetch_clob_markets(
-        self, next_cursor: str = "MA==", *, active: bool = False,
+        self, next_cursor: str = "MA==",
     ) -> tuple[list[dict], str]:
         """Fetch one page of markets from CLOB API.
 
-        Returns (markets_list, next_cursor).  Cursor "LTE" means no more pages.
+        Returns (markets_list, next_cursor). Cursor "LTE" means no more pages.
         """
         client = await self._get_clob_client()
         params: dict[str, str] = {"next_cursor": next_cursor}
-        if active:
-            params["active"] = "true"
-            params["closed"] = "false"
         try:
             resp = await client.get("/markets", params=params)
             resp.raise_for_status()
             data = resp.json()
-            # CLOB /markets -> {"data": [...], "next_cursor": "..."}
             if isinstance(data, dict):
                 return data.get("data", []), data.get("next_cursor", "LTE")
             return data, "LTE"
@@ -118,57 +67,52 @@ class MarketDiscovery:
             logger.warning("CLOB /markets error: %s", e)
             return [], "LTE"
 
-    # ── Unified market discovery ──
+    # ── Fetch all active markets ──
 
-    async def fetch_all_btc_short_term_markets(self) -> list[Market]:
-        """Try Gamma API first; fall back to CLOB API if Gamma fails."""
-        markets = await self._fetch_via_gamma()
-        if markets:
-            return markets
-
-        logger.info("Gamma API returned 0 results, falling back to CLOB API /markets")
-        return await self._fetch_via_clob()
-
-    async def _fetch_via_gamma(self) -> list[Market]:
-        """Paginate Gamma /events and filter for BTC short-term markets."""
+    async def fetch_active_markets(self, max_pages: int = 50) -> list[Market]:
+        """Fetch all active markets from CLOB API and return ones with valid tokens."""
         all_markets: list[Market] = []
-        offset = 0
-        limit = 100
-
-        for _ in range(20):
-            events = await self.fetch_events(offset=offset, limit=limit)
-            if not events:
-                break
-            for event in events:
-                for m in event.get("markets", []):
-                    market = self._parse_market(m, source="gamma")
-                    if market and self._is_btc_short_term(market):
-                        all_markets.append(market)
-            if len(events) < limit:
-                break
-            offset += limit
-
-        if all_markets:
-            logger.info("Gamma API: found %d BTC short-term markets", len(all_markets))
-        return all_markets
-
-    async def _fetch_via_clob(self) -> list[Market]:
-        """Paginate CLOB /markets and filter for BTC short-term markets."""
-        all_markets: list[Market] = []
+        seen: set[str] = set()
         cursor = "MA=="
 
-        for _ in range(50):  # CLOB pages can be small
-            raw_list, cursor = await self.fetch_clob_markets(cursor, active=True)
+        for _ in range(max_pages):
+            raw_list, cursor = await self.fetch_clob_markets(cursor)
             if not raw_list:
                 break
+
             for m in raw_list:
-                market = self._parse_market(m, source="clob")
-                if market and self._is_btc_short_term(market):
-                    all_markets.append(market)
+                market = self._parse_market(m)
+                if not market or not market.condition_id:
+                    continue
+                if market.condition_id in seen:
+                    continue
+                seen.add(market.condition_id)
+
+                # Skip closed or inactive
+                if not market.active:
+                    continue
+
+                # Must have at least 2 tokens (YES/NO)
+                if len(market.tokens) < 2:
+                    continue
+
+                # Skip expired markets
+                if market.end_date:
+                    try:
+                        end_dt = datetime.fromisoformat(
+                            market.end_date.replace("Z", "+00:00")
+                        )
+                        if end_dt < datetime.now(timezone.utc):
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                all_markets.append(market)
+
             if not cursor or cursor == "LTE":
                 break
 
-        logger.info("CLOB API: found %d BTC short-term markets", len(all_markets))
+        logger.info("CLOB API: found %d active markets", len(all_markets))
         return all_markets
 
     # ── CLOB API: /book ──
@@ -191,16 +135,14 @@ class MarketDiscovery:
     async def enrich_market_with_books(self, market: Market) -> Market:
         """Fetch order books for all tokens in a market."""
         for token in market.tokens:
-            token.order_book = await self.fetch_order_book(token.token_id)
+            if token.token_id:
+                token.order_book = await self.fetch_order_book(token.token_id)
         return market
 
     # ── Parsing helpers ──
 
-    def _parse_market(self, raw: dict, source: str = "gamma") -> Optional[Market]:
-        """Parse a raw API market dict into a Market model.
-
-        Works for both Gamma and CLOB response shapes.
-        """
+    def _parse_market(self, raw: dict) -> Optional[Market]:
+        """Parse a raw CLOB API market dict into a Market model."""
         try:
             tokens_raw = raw.get("tokens", [])
             if isinstance(tokens_raw, str):
@@ -221,12 +163,12 @@ class MarketDiscovery:
                 question=raw.get("question", ""),
                 slug=raw.get("market_slug", raw.get("slug", "")),
                 tokens=tokens,
-                active=raw.get("active", True),
+                active=bool(raw.get("active", True)),
                 end_date=raw.get("end_date_iso", raw.get("end_date", "")),
                 volume=float(raw.get("volume", 0) or 0),
             )
         except Exception as e:
-            logger.debug("Failed to parse market (%s): %s", source, e)
+            logger.debug("Failed to parse market: %s", e)
             return None
 
     def _parse_order_book(self, data: dict) -> OrderBookSnapshot:
@@ -240,25 +182,3 @@ class MarketDiscovery:
         bids.sort(key=lambda x: x.price, reverse=True)
         asks.sort(key=lambda x: x.price)
         return OrderBookSnapshot(bids=bids, asks=asks)
-
-    @staticmethod
-    def _is_btc_short_term(market: Market) -> bool:
-        """Check if market is BTC-related and short-term (ends within 30 days)."""
-        q = market.question.lower()
-        has_btc = any(kw in q for kw in BTC_KEYWORDS)
-        if not has_btc:
-            return False
-
-        # If no end_date, accept all BTC markets
-        if not market.end_date:
-            return True
-
-        # Parse end_date and check if within SHORT_TERM_MAX_DAYS
-        try:
-            end_dt = datetime.fromisoformat(market.end_date.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            days_left = (end_dt - now).days
-            return 0 <= days_left <= SHORT_TERM_MAX_DAYS
-        except (ValueError, TypeError):
-            # If date parsing fails, include it anyway
-            return True
