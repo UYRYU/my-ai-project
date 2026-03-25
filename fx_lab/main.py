@@ -126,6 +126,7 @@ def main() -> None:
     parser.add_argument("--phase3", action="store_true", help="atr_break集中砲撃+WF検証Phase3")
     parser.add_argument("--final", action="store_true", help="最終候補プロファイル+EA生成")
     parser.add_argument("--validate", action="store_true", help="最終候補長期検証")
+    parser.add_argument("--gbpjpy-validate", action="store_true", help="候補2&3 GBPJPY限定検証")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -156,7 +157,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.validate:
+    if args.gbpjpy_validate:
+        logger.info("モード: 候補2&3 GBPJPY限定検証")
+        from validate_gbpjpy import run_gbpjpy_validation
+        run_gbpjpy_validation(settings)
+    elif args.validate:
         logger.info("モード: 最終候補長期検証")
         from long_term_validation import run_long_term
         run_long_term(settings)
