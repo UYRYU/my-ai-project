@@ -269,9 +269,18 @@ class ConfigurableStrategy(Strategy):
 
             elif ftype == "htf_trend":
                 htf_period = filt.get("period", 50)
+                htf_mode = filt.get("mode", "trend")  # "trend" or "reversion"
                 self._add_higher_tf_trend(df, htf_period)
-                df.loc[(df["signal"] == 1) & (df["htf_trend"] != 1), "signal"] = 0
-                df.loc[(df["signal"] == -1) & (df["htf_trend"] != -1), "signal"] = 0
+                if htf_mode == "reversion":
+                    # 逆張りモード: H1上昇中はショート禁止、H1下降中はロング禁止
+                    # (逆張りシグナル方向がH1トレンドに逆らうのは許容)
+                    # ただしH1トレンドに完全に逆行するシグナルのみ除去
+                    df.loc[(df["signal"] == -1) & (df["htf_trend"] == 1), "signal"] = 0
+                    df.loc[(df["signal"] == 1) & (df["htf_trend"] == -1), "signal"] = 0
+                else:
+                    # 順張りモード: シグナル方向がHTFトレンドと一致する場合のみ
+                    df.loc[(df["signal"] == 1) & (df["htf_trend"] != 1), "signal"] = 0
+                    df.loc[(df["signal"] == -1) & (df["htf_trend"] != -1), "signal"] = 0
 
             elif ftype == "rsi_range_filter":
                 rsi_period = filt.get("rsi_period", 14)
@@ -282,6 +291,36 @@ class ConfigurableStrategy(Strategy):
                     self._add_rsi(df, rsi_period, col)
                 # RSIが範囲外ならシグナル除去
                 df.loc[(df[col] < rsi_low) | (df[col] > rsi_high), "signal"] = 0
+
+            elif ftype == "bb_touch_filter":
+                # BB外側タッチフィルタ: ロングはBB下限タッチ時のみ、ショートはBB上限タッチ時のみ
+                bb_period = filt.get("period", 20)
+                bb_std = filt.get("std_mult", 2.0)
+                if "bb_lower" not in df.columns:
+                    self._add_bb(df, bb_period, bb_std)
+                # ロングシグナルはBB下限以下でないと無効
+                df.loc[(df["signal"] == 1) & (df["close"] > df["bb_lower"]), "signal"] = 0
+                # ショートシグナルはBB上限以上でないと無効
+                df.loc[(df["signal"] == -1) & (df["close"] < df["bb_upper"]), "signal"] = 0
+
+            elif ftype == "atr_low_vola_filter":
+                # ATR低ボラフィルタ: ATRが直近N期間の中央値以下のみエントリー
+                vola_lookback = filt.get("lookback", 100)
+                atr_col = "atr"
+                if atr_col not in df.columns:
+                    self._add_atr(df, 14)
+                atr_median = df[atr_col].rolling(window=vola_lookback, min_periods=20).median()
+                df.loc[(df["signal"] != 0) & (df[atr_col] > atr_median), "signal"] = 0
+
+            elif ftype == "wick_direction_filter":
+                # ヒゲ反転フィルタ: 下ヒゲ長い=ロング候補のみ、上ヒゲ長い=ショート候補のみ
+                wick_ratio_thresh = filt.get("wick_ratio", 1.5)
+                if "wick_ratio_lower" not in df.columns:
+                    self._add_wick_info(df)
+                # ロングは下ヒゲが十分長い場合のみ
+                df.loc[(df["signal"] == 1) & (df["wick_ratio_lower"] < wick_ratio_thresh), "signal"] = 0
+                # ショートは上ヒゲが十分長い場合のみ
+                df.loc[(df["signal"] == -1) & (df["wick_ratio_upper"] < wick_ratio_thresh), "signal"] = 0
 
         return df
 

@@ -118,6 +118,7 @@ def main() -> None:
     parser.add_argument("--strategies", type=int, default=None, help="ラウンドあたり戦略数を上書き")
     parser.add_argument("--import-mt", action="store_true", help="MT4/MT5 CSVインポートのみ実行")
     parser.add_argument("--explore", action="store_true", help="RSI逆張り深掘り探索モード")
+    parser.add_argument("--explore-struct", action="store_true", help="RSI+構造フィルタ深掘り探索モード")
     args = parser.parse_args()
 
     # パスの基準をこのスクリプトのディレクトリにする
@@ -148,7 +149,11 @@ def main() -> None:
     if args.strategies is not None:
         settings.setdefault("research", {})["strategies_per_round"] = args.strategies
 
-    if args.explore:
+    if args.explore_struct:
+        logger.info("モード: RSI+構造フィルタ深掘り探索")
+        from explore_rsi_structure import run_structure_exploration
+        run_structure_exploration(settings)
+    elif args.explore:
         logger.info("モード: RSI逆張り深掘り探索")
         from explore_rsi import run_exploration
         run_exploration(settings)
