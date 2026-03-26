@@ -1,5 +1,7 @@
 """SPACEX/USDT スキャルピング バックテスト"""
 
+import math
+import random
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -120,9 +122,99 @@ def fetch_backtest_data(days: int = 1) -> list[dict]:
     return all_klines
 
 
+def generate_simulated_data(days: int = 1) -> list[dict]:
+    """
+    チャートの実データに基づいたシミュレーションデータ生成
+    SPACEX/USDT: ベース価格1,600付近、24h高値1,668/安値1,553 (約7%レンジ)
+    """
+    random.seed(42)
+    total_candles = days * 24 * 60
+    klines = []
+
+    base_price = 1600.0
+    price = 1580.0  # 開始価格
+
+    # チャートから読み取ったボラティリティ特性
+    # 1分足で平均0.1-0.3%の値動き、時折1%近い急変動
+    volatility_base = 0.0015  # 0.15% per minute
+    mean_reversion = 0.0003   # 平均回帰力
+
+    # 時間帯によるボラティリティ変動 (UTC)
+    # アジア時間(0-8): やや低め、欧州(8-16): 普通、米国(16-24): 高め
+    hour_vol_factor = {
+        **{h: 0.8 for h in range(0, 8)},
+        **{h: 1.0 for h in range(8, 16)},
+        **{h: 1.3 for h in range(16, 24)},
+    }
+
+    # トレンドサイクル (数時間ごとに上下)
+    trend_cycle_minutes = random.randint(120, 360)
+
+    start_time = datetime.now(timezone.utc) - timedelta(days=days)
+
+    for i in range(total_candles):
+        candle_time = start_time + timedelta(minutes=i)
+        hour = candle_time.hour
+        vol_factor = hour_vol_factor.get(hour, 1.0)
+
+        # トレンド成分 (サイン波でレンジ内を上下)
+        trend = math.sin(2 * math.pi * i / trend_cycle_minutes) * 40
+        # 2つ目のサイクル (長め)
+        trend += math.sin(2 * math.pi * i / (trend_cycle_minutes * 2.7)) * 25
+
+        # ランダムウォーク
+        noise = random.gauss(0, volatility_base * price * vol_factor)
+
+        # 平均回帰 (base_price付近に戻す力)
+        reversion = (base_price + trend - price) * mean_reversion
+
+        # 急変動 (1%の確率で大きな動き)
+        spike = 0
+        if random.random() < 0.01:
+            spike = random.gauss(0, price * 0.005)
+
+        price += noise + reversion + spike
+        price = max(price, 1450)  # 下限
+        price = min(price, 1750)  # 上限
+
+        # OHLC生成
+        open_p = price
+        intra_moves = [random.gauss(0, price * 0.0008 * vol_factor) for _ in range(4)]
+        intra_prices = [price + m for m in intra_moves]
+        high_p = max(open_p, max(intra_prices))
+        low_p = min(open_p, min(intra_prices))
+        close_p = price + intra_moves[-1]
+        price = close_p
+
+        vol = random.uniform(500, 5000) * vol_factor
+
+        klines.append({
+            "time": int(candle_time.timestamp()),
+            "open": round(open_p, 2),
+            "high": round(high_p, 2),
+            "low": round(low_p, 2),
+            "close": round(close_p, 2),
+            "vol": round(vol, 2),
+        })
+
+    # データ統計表示
+    closes = [k["close"] for k in klines]
+    highs = [k["high"] for k in klines]
+    lows = [k["low"] for k in klines]
+    print(f"シミュレーションデータ生成完了 ({len(klines)}本)")
+    print(f"  期間高値: {max(highs):.1f} / 安値: {min(lows):.1f} / レンジ: {(max(highs)-min(lows))/min(lows)*100:.1f}%")
+    print(f"  開始: {closes[0]:.1f} → 終了: {closes[-1]:.1f}")
+
+    return klines
+
+
 def run_backtest(days: int = 1, verbose: bool = True):
     """バックテストを実行"""
+    # まずAPI取得を試み、失敗したらシミュレーションデータを使用
     klines = fetch_backtest_data(days)
+    if len(klines) < config.BOLLINGER_PERIOD + 1:
+        print("APIデータ取得失敗 → シミュレーションデータで実行\n")
+        klines = generate_simulated_data(days)
     if len(klines) < config.BOLLINGER_PERIOD + 1:
         print("データが不足しています")
         return None
