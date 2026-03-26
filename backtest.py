@@ -208,16 +208,137 @@ def generate_simulated_data(days: int = 1) -> list[dict]:
     return klines
 
 
-def run_backtest(days: int = 1, verbose: bool = True):
-    """バックテストを実行"""
-    # まずAPI取得を試み、失敗したらシミュレーションデータを使用
+def _get_klines(days: int) -> list[dict]:
+    """データ取得のヘルパー: API取得を試み、失敗時はシミュレーションデータを使用"""
     klines = fetch_backtest_data(days)
     if len(klines) < config.BOLLINGER_PERIOD + 1:
         print("APIデータ取得失敗 → シミュレーションデータで実行\n")
         klines = generate_simulated_data(days)
+    return klines
+
+
+def _check_trend_filter(close_buffer: list[float], side: str, period: int = 50) -> bool:
+    """
+    トレンドフィルター: 明確なトレンドがある場合、逆張りエントリーをスキップ
+    Returns True if entry should be BLOCKED (counter-trend).
+
+    Logic:
+      - 直近20本のうち80%以上がMA上にある → 明確な上昇トレンド
+        → ショート(逆張り)をブロック、ロング(順張り)は許可
+      - 直近20本のうち80%以上がMA下にある → 明確な下降トレンド
+        → ロング(逆張り)をブロック、ショート(順張り)は許可
+      - トレンドが不明確 → 全てのエントリーを許可
+    """
+    if len(close_buffer) < period:
+        return False
+
+    recent = close_buffer[-period:]
+    ma = statistics.mean(recent)
+
+    # 直近の価格がMA上/下に一貫しているかチェック (80%以上片側ならトレンド)
+    above_count = sum(1 for p in recent[-20:] if p > ma)
+    below_count = 20 - above_count
+
+    # 明確な上昇トレンド: ロング(順張り)はOK、ショート(逆張り)をブロック
+    if above_count >= 16 and side == "short":
+        return True
+    # 明確な下降トレンド: ショート(順張り)はOK、ロング(逆張り)をブロック
+    if below_count >= 16 and side == "long":
+        return True
+
+    return False
+
+
+def _parse_candle_hour(candle_time_str: str) -> int:
+    """candle_time文字列からUTC時間(hour)を抽出"""
+    try:
+        return int(candle_time_str.split(" ")[1].split(":")[0])
+    except (IndexError, ValueError):
+        return -1
+
+
+def _print_equity_curve(trades: list[BacktestTrade], chart_width: int = 60, chart_height: int = 15):
+    """ASCII形式のエクイティカーブを表示"""
+    if not trades:
+        return
+
+    # 累計PnLの推移を計算
+    cumulative = []
+    running = 0.0
+    for t in trades:
+        running += t.pnl
+        cumulative.append(running)
+
+    if len(cumulative) < 2:
+        return
+
+    min_pnl = min(cumulative)
+    max_pnl = max(cumulative)
+    pnl_range = max_pnl - min_pnl
+
+    if pnl_range == 0:
+        pnl_range = 1.0  # ゼロ除算防止
+
+    print(f"\n  エクイティカーブ (累計PnL推移):")
+    print(f"  {'='*chart_width}")
+
+    # データをチャート幅にリサンプリング
+    if len(cumulative) > chart_width:
+        step = len(cumulative) / chart_width
+        sampled = [cumulative[int(i * step)] for i in range(chart_width)]
+    else:
+        sampled = cumulative
+
+    # 各行を描画
+    for row in range(chart_height, -1, -1):
+        threshold = min_pnl + (pnl_range * row / chart_height)
+        if row == chart_height:
+            label = f"{max_pnl:+8.1f}"
+        elif row == 0:
+            label = f"{min_pnl:+8.1f}"
+        elif row == chart_height // 2:
+            mid = (max_pnl + min_pnl) / 2
+            label = f"{mid:+8.1f}"
+        else:
+            label = "        "
+
+        line = f"  {label} |"
+        for val in sampled:
+            if val >= threshold:
+                line += "#"
+            else:
+                line += " "
+        print(line)
+
+    # X軸
+    print(f"           +{'-'*len(sampled)}")
+    print(f"            取引 1{' '*(len(sampled)-5)}#{len(cumulative)}")
+
+
+def run_backtest(days: int = 1, verbose: bool = True, trend_filter: bool = False,
+                 time_filter: tuple[int, int] | None = None,
+                 range_method_override: str | None = None,
+                 label: str = ""):
+    """バックテストを実行
+
+    Args:
+        days: バックテスト期間(日数)
+        verbose: 詳細ログ出力
+        trend_filter: トレンドフィルターを有効にする
+        time_filter: (start_hour, end_hour) 取引時間帯フィルター (UTC)
+        range_method_override: レンジ計算方法を一時的に上書き
+        label: 表示用ラベル (compare mode用)
+    """
+    # まずAPI取得を試み、失敗したらシミュレーションデータを使用
+    klines = _get_klines(days)
     if len(klines) < config.BOLLINGER_PERIOD + 1:
         print("データが不足しています")
         return None
+
+    # レンジ方法の一時上書き
+    original_range_method = config.RANGE_METHOD
+    if range_method_override:
+        config.RANGE_METHOD = range_method_override
 
     result = BacktestResult()
     in_position = False
@@ -225,6 +346,8 @@ def run_backtest(days: int = 1, verbose: bool = True):
     entry_price = 0.0
     entry_time = ""
     cooldown_until = 0
+    trend_skips = 0
+    time_skips = 0
 
     # レンジ計算用のバッファ
     close_buffer = []
@@ -238,12 +361,17 @@ def run_backtest(days: int = 1, verbose: bool = True):
     # レンジ更新間隔（ローソク足本数で指定、15本=15分足相当）
     range_interval = max(1, config.RANGE_UPDATE_INTERVAL // 60)
 
+    display_label = f" [{label}]" if label else ""
     print(f"\n{'='*60}")
-    print(f"バックテスト開始 (過去{days}日間)")
+    print(f"バックテスト開始 (過去{days}日間){display_label}")
     print(f"データ: {len(klines)}本 (1分足)")
     print(f"設定: TP={config.TAKE_PROFIT_PCT}% SL={config.STOP_LOSS_PCT}%")
     print(f"レンジ計算: {config.RANGE_METHOD} (更新間隔: {range_interval}分)")
     print(f"注文数量: {config.ORDER_SIZE}")
+    if trend_filter:
+        print(f"トレンドフィルター: 有効")
+    if time_filter:
+        print(f"取引時間帯フィルター: {time_filter[0]:02d}:00 - {time_filter[1]:02d}:00 UTC")
     print(f"{'='*60}\n")
 
     for i, candle in enumerate(klines):
@@ -264,7 +392,7 @@ def run_backtest(days: int = 1, verbose: bool = True):
         low_buffer.append(low)
 
         # バッファ制限
-        max_buf = config.BOLLINGER_PERIOD + 10
+        max_buf = max(config.BOLLINGER_PERIOD + 10, 60)
         if len(close_buffer) > max_buf:
             close_buffer = close_buffer[-max_buf:]
             high_buffer = high_buffer[-max_buf:]
@@ -362,9 +490,29 @@ def run_backtest(days: int = 1, verbose: bool = True):
             if i < cooldown_until:
                 continue
 
+            # 時間帯フィルター
+            if time_filter:
+                hour = _parse_candle_hour(candle_time)
+                start_h, end_h = time_filter
+                if start_h <= end_h:
+                    if not (start_h <= hour < end_h):
+                        time_skips += 1
+                        continue
+                else:  # 日をまたぐ場合 (例: 22-06)
+                    if not (hour >= start_h or hour < end_h):
+                        time_skips += 1
+                        continue
+
             offset = width * (config.ENTRY_OFFSET_PCT / 100)
 
             if close <= lower + offset:
+                # トレンドフィルター
+                if trend_filter and _check_trend_filter(close_buffer, "long"):
+                    trend_skips += 1
+                    if verbose:
+                        print(f"  [{candle_time}] SKIP LONG  @ {close:.1f} (トレンドフィルター)")
+                    continue
+
                 in_position = True
                 position_side = "long"
                 entry_price = close
@@ -374,6 +522,13 @@ def run_backtest(days: int = 1, verbose: bool = True):
                     print(f"  [{candle_time}] ENTRY LONG  @ {close:.1f} (レンジ{pct:.0f}%) [{lower:.1f}-{upper:.1f}]")
 
             elif close >= upper - offset:
+                # トレンドフィルター
+                if trend_filter and _check_trend_filter(close_buffer, "short"):
+                    trend_skips += 1
+                    if verbose:
+                        print(f"  [{candle_time}] SKIP SHORT @ {close:.1f} (トレンドフィルター)")
+                    continue
+
                 in_position = True
                 position_side = "short"
                 entry_price = close
@@ -398,8 +553,23 @@ def run_backtest(days: int = 1, verbose: bool = True):
         if verbose:
             print(f"  [終了] 未決済ポジション決済 @ {last_close:.1f} | PnL: {pnl:+.2f}")
 
+    # フィルター統計
+    if trend_filter and trend_skips > 0:
+        print(f"\n  トレンドフィルター: {trend_skips}回のエントリーをスキップ")
+    if time_filter and time_skips > 0:
+        print(f"\n  時間帯フィルター: {time_skips}本のキャンドルをスキップ")
+
     # 結果表示
     _print_result(result, days)
+
+    # エクイティカーブ表示 (verbose時のみ)
+    if verbose and result.trades:
+        _print_equity_curve(result.trades)
+
+    # レンジ方法を元に戻す
+    if range_method_override:
+        config.RANGE_METHOD = original_range_method
+
     return result
 
 
@@ -463,6 +633,69 @@ def _print_result(result: BacktestResult, days: int):
             print(f"  ヒント: SLが多い → SL幅を広げるか、エントリー位置を見直す")
         if result.win_rate > 60 and result.total_pnl < 0:
             print(f"  ヒント: 勝率は高いが損益マイナス → TP/SLの比率を見直す")
+
+
+def run_compare(days: int = 1, trend_filter: bool = False,
+                 time_filter: tuple[int, int] | None = None):
+    """bollingerとhighlowのレンジ方法を並列実行して比較"""
+    print(f"\n{'#'*60}")
+    print(f"  レンジ方法比較モード (過去{days}日間)")
+    print(f"  bollinger vs highlow")
+    print(f"{'#'*60}")
+
+    # データを1回だけ取得してキャッシュ (run_backtest内で取得される)
+    result_boll = run_backtest(
+        days, verbose=False, trend_filter=trend_filter,
+        time_filter=time_filter, range_method_override="bollinger",
+        label="bollinger"
+    )
+    result_hl = run_backtest(
+        days, verbose=False, trend_filter=trend_filter,
+        time_filter=time_filter, range_method_override="highlow",
+        label="highlow"
+    )
+
+    # 比較表
+    print(f"\n{'='*60}")
+    print(f"  比較結果サマリー")
+    print(f"{'='*60}")
+    print(f"  {'指標':<14s} | {'bollinger':>12s} | {'highlow':>12s} | {'差分':>10s}")
+    print(f"  {'-'*54}")
+
+    metrics = []
+    if result_boll and result_hl:
+        metrics = [
+            ("取引回数", result_boll.total_trades, result_hl.total_trades, "d"),
+            ("勝率 (%)", result_boll.win_rate, result_hl.win_rate, "f"),
+            ("損益合計", result_boll.total_pnl, result_hl.total_pnl, "f"),
+            ("PF", result_boll.profit_factor, result_hl.profit_factor, "f"),
+            ("平均利益", result_boll.avg_win, result_hl.avg_win, "f"),
+            ("平均損失", result_boll.avg_loss, result_hl.avg_loss, "f"),
+            ("最大DD", result_boll.max_drawdown, result_hl.max_drawdown, "f"),
+        ]
+
+        for name, v_boll, v_hl, fmt in metrics:
+            diff = v_boll - v_hl
+            if fmt == "d":
+                print(f"  {name:<14s} | {v_boll:>12d} | {v_hl:>12d} | {diff:>+10d}")
+            else:
+                print(f"  {name:<14s} | {v_boll:>12.2f} | {v_hl:>12.2f} | {diff:>+10.2f}")
+
+        # 勝者判定
+        boll_pnl = result_boll.total_pnl if result_boll else 0
+        hl_pnl = result_hl.total_pnl if result_hl else 0
+        if boll_pnl > hl_pnl:
+            winner = "bollinger"
+        elif hl_pnl > boll_pnl:
+            winner = "highlow"
+        else:
+            winner = "引き分け"
+        print(f"\n  勝者: {winner} (PnL基準)")
+    else:
+        print("  比較に必要なデータが不足しています")
+
+    print(f"{'='*60}")
+    return result_boll, result_hl
 
 
 def optimize_params(days: int = 1):
@@ -533,19 +766,42 @@ def optimize_params(days: int = 1):
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    args = sys.argv[1:]
+    parser = argparse.ArgumentParser(description="SPACEX/USDT スキャルピング バックテスト")
+    parser.add_argument("days", nargs="?", type=int, default=1,
+                        help="バックテスト期間 (日数, デフォルト: 1)")
+    parser.add_argument("--optimize", action="store_true",
+                        help="パラメータ最適化モード")
+    parser.add_argument("--trend-filter", action="store_true",
+                        help="トレンドフィルターを有効にする (逆張りエントリーをスキップ)")
+    parser.add_argument("--compare", action="store_true",
+                        help="bollinger と highlow のレンジ方法を比較")
+    parser.add_argument("--time-filter", type=str, default=None,
+                        help="取引時間帯フィルター (例: '03-12' = UTC 03:00-12:00)")
 
-    if "--optimize" in args:
-        days = 1
-        for a in args:
-            if a.isdigit():
-                days = int(a)
-        optimize_params(days)
+    parsed = parser.parse_args()
+
+    # 時間帯フィルターのパース
+    time_filter_val = None
+    if parsed.time_filter:
+        try:
+            parts = parsed.time_filter.split("-")
+            start_h = int(parts[0])
+            end_h = int(parts[1])
+            if not (0 <= start_h <= 23 and 0 <= end_h <= 23):
+                print("エラー: 時間は0-23の範囲で指定してください")
+                raise SystemExit(1)
+            time_filter_val = (start_h, end_h)
+        except (ValueError, IndexError):
+            print("エラー: --time-filter は 'HH-HH' 形式で指定してください (例: '03-12')")
+            raise SystemExit(1)
+
+    if parsed.optimize:
+        optimize_params(parsed.days)
+    elif parsed.compare:
+        run_compare(parsed.days, trend_filter=parsed.trend_filter,
+                    time_filter=time_filter_val)
     else:
-        days = 1
-        for a in args:
-            if a.isdigit():
-                days = int(a)
-        run_backtest(days, verbose=True)
+        run_backtest(parsed.days, verbose=True, trend_filter=parsed.trend_filter,
+                     time_filter=time_filter_val)
