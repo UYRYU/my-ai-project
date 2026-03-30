@@ -36,7 +36,9 @@ def _api_get(url: str, params: dict) -> dict:
 
 
 def _get_option_contracts(ticker: str) -> list[dict]:
-    """指定銘柄のオプション契約一覧を取得（DTE 30日以内、CALLのみ）"""
+    """指定銘柄のオプション契約一覧を取得（DTE 30日以内、CALLのみ）
+    ページネーションで全件取得する。
+    """
     today = datetime.now().strftime("%Y-%m-%d")
     max_exp = (datetime.now() + timedelta(days=config.MAX_DTE)).strftime("%Y-%m-%d")
 
@@ -51,13 +53,22 @@ def _get_option_contracts(ticker: str) -> list[dict]:
         "apiKey": config.POLYGON_API_KEY,
     }
 
-    data = _api_get(url, params)
-    return data.get("results", [])
+    all_contracts = []
+    while url:
+        data = _api_get(url, params)
+        all_contracts.extend(data.get("results", []))
+        next_url = data.get("next_url")
+        if next_url:
+            url = next_url
+            params = {"apiKey": config.POLYGON_API_KEY}
+        else:
+            break
+
+    return all_contracts
 
 
-def _get_contract_details(contract_ticker: str) -> dict | None:
-    """個別契約のdaily barを取得（前日の出来高・終値）"""
-    # 前営業日のデータを取得
+def _get_contract_bar(contract_ticker: str) -> dict | None:
+    """個別契約の前日barを取得（出来高・終値）"""
     url = f"{config.POLYGON_BASE_URL}/v2/aggs/ticker/{contract_ticker}/prev"
     params = {
         "adjusted": "true",
@@ -66,15 +77,35 @@ def _get_contract_details(contract_ticker: str) -> dict | None:
 
     data = _api_get(url, params)
     results = data.get("results", [])
-    if results:
-        return results[0]
-    return None
+    return results[0] if results else None
 
 
 def _calc_dte(expiration: str) -> int:
     """満期までの日数を計算"""
     exp_date = datetime.strptime(expiration, "%Y-%m-%d")
     return (exp_date - datetime.now()).days
+
+
+def _prefilter_contracts(contracts: list[dict]) -> list[dict]:
+    """OIが低すぎる契約を事前に除外し、OI昇順でソート（OIが低い＝Vol/OI比が高くなりやすい）
+    これにより、APIコール数を最小限に抑える。
+    """
+    candidates = []
+    for c in contracts:
+        oi = c.get("open_interest", 0)
+        exp = c.get("expiration_date", "")
+        if oi <= 0 or not exp:
+            continue
+        dte = _calc_dte(exp)
+        if dte < 0 or dte > config.MAX_DTE:
+            continue
+        candidates.append(c)
+
+    # OI昇順（Vol/OI比が高くなりやすい順）
+    candidates.sort(key=lambda c: c.get("open_interest", 0))
+
+    # APIコール数を制限（上位N件のみ詳細取得）
+    return candidates[:config.MAX_CONTRACTS_PER_TICKER]
 
 
 def scan_ticker(ticker: str) -> list[OptionFlow]:
@@ -88,23 +119,18 @@ def scan_ticker(ticker: str) -> list[OptionFlow]:
     if not contracts:
         return []
 
-    print(f"  {ticker}: {len(contracts)} contracts found, checking details...")
-    flows = []
+    candidates = _prefilter_contracts(contracts)
+    print(f"  {ticker}: {len(contracts)} contracts → {len(candidates)} candidates")
 
-    for contract in contracts:
+    flows = []
+    for contract in candidates:
         contract_ticker = contract.get("ticker", "")
         expiration = contract.get("expiration_date", "")
         strike = contract.get("strike_price", 0)
-
-        if not contract_ticker or not expiration:
-            continue
-
-        dte = _calc_dte(expiration)
-        if dte < 0 or dte > config.MAX_DTE:
-            continue
+        open_interest = contract.get("open_interest", 0)
 
         try:
-            bar = _get_contract_details(contract_ticker)
+            bar = _get_contract_bar(contract_ticker)
         except requests.RequestException as e:
             print(f"  [WARN] {contract_ticker} スキップ: {e}")
             continue
@@ -115,12 +141,9 @@ def scan_ticker(ticker: str) -> list[OptionFlow]:
         volume = bar.get("v", 0)
         close_price = bar.get("c", 0)
 
-        # OIはcontracts APIのopen_interestを使用
-        open_interest = contract.get("open_interest", 0)
-
-        # フィルタリング
-        if open_interest <= 0:
+        if volume <= 0 or close_price <= 0:
             continue
+
         vol_oi = volume / open_interest
         if vol_oi < config.MIN_VOLUME_OI_RATIO:
             continue
@@ -134,7 +157,7 @@ def scan_ticker(ticker: str) -> list[OptionFlow]:
             contract=contract_ticker,
             strike=strike,
             expiration=expiration,
-            dte=dte,
+            dte=_calc_dte(expiration),
             volume=int(volume),
             open_interest=int(open_interest),
             volume_oi_ratio=round(vol_oi, 2),

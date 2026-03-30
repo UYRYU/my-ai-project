@@ -20,3 +20,6 @@ SIDE_FILTER = "call"        # CALLのみ
 
 # スキャン間隔（秒）
 SCAN_INTERVAL = 60
+
+# 1銘柄あたりの詳細取得数上限（APIコール節約）
+MAX_CONTRACTS_PER_TICKER = 5
