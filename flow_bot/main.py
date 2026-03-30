@@ -44,9 +44,10 @@ def run_scan():
 
 def main():
     """メインループ"""
-    if not config.POLYGON_API_KEY:
-        print("\033[31m[ERROR] POLYGON_API_KEY が設定されていません。\033[0m")
-        print("  export POLYGON_API_KEY='your-api-key'")
+    if not config.ALPACA_API_KEY or not config.ALPACA_SECRET_KEY:
+        print("\033[31m[ERROR] Alpaca APIキーが設定されていません。\033[0m")
+        print("  export ALPACA_API_KEY='your-key'")
+        print("  export ALPACA_SECRET_KEY='your-secret'")
         sys.exit(1)
 
     print_banner()

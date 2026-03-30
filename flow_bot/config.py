@@ -2,9 +2,10 @@
 
 import os
 
-# Polygon.io API
-POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY", "")
-POLYGON_BASE_URL = "https://api.polygon.io"
+# Alpaca API
+ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+ALPACA_DATA_URL = "https://data.alpaca.markets"
 
 # 監視銘柄
 WATCHLIST = [
@@ -20,6 +21,3 @@ SIDE_FILTER = "call"        # CALLのみ
 
 # スキャン間隔（秒）
 SCAN_INTERVAL = 60
-
-# 1銘柄あたりの詳細取得数上限（APIコール節約）
-MAX_CONTRACTS_PER_TICKER = 20

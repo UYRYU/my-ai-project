@@ -1,15 +1,11 @@
-"""Unusual Options Flow Scanner - Polygon.io APIからオプションデータを取得・フィルタリング"""
+"""Unusual Options Flow Scanner - Alpaca APIからオプションデータを取得・フィルタリング"""
 
-import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 import requests
 
 import config
-
-# 無料プランのレート制限対応（5 calls/min）
-API_CALL_DELAY = 13  # 秒
 
 
 @dataclass
@@ -27,57 +23,12 @@ class OptionFlow:
     side: str  # "call" or "put"
 
 
-def _api_get(url: str, params: dict) -> dict:
-    """API呼び出し（レート制限対応付き）"""
-    resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
-    time.sleep(API_CALL_DELAY)
-    return resp.json()
-
-
-def _get_option_contracts(ticker: str) -> list[dict]:
-    """指定銘柄のオプション契約一覧を取得（DTE 30日以内、CALLのみ）
-    ページネーションで全件取得する。
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    max_exp = (datetime.now() + timedelta(days=config.MAX_DTE)).strftime("%Y-%m-%d")
-
-    url = f"{config.POLYGON_BASE_URL}/v3/reference/options/contracts"
-    params = {
-        "underlying_ticker": ticker,
-        "contract_type": config.SIDE_FILTER,
-        "expiration_date.gte": today,
-        "expiration_date.lte": max_exp,
-        "expired": "false",
-        "limit": 250,
-        "apiKey": config.POLYGON_API_KEY,
+def _get_headers() -> dict:
+    """Alpaca API認証ヘッダー"""
+    return {
+        "APCA-API-KEY-ID": config.ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": config.ALPACA_SECRET_KEY,
     }
-
-    all_contracts = []
-    while url:
-        data = _api_get(url, params)
-        all_contracts.extend(data.get("results", []))
-        next_url = data.get("next_url")
-        if next_url:
-            url = next_url
-            params = {"apiKey": config.POLYGON_API_KEY}
-        else:
-            break
-
-    return all_contracts
-
-
-def _get_contract_bar(contract_ticker: str) -> dict | None:
-    """個別契約の前日barを取得（出来高・終値）"""
-    url = f"{config.POLYGON_BASE_URL}/v2/aggs/ticker/{contract_ticker}/prev"
-    params = {
-        "adjusted": "true",
-        "apiKey": config.POLYGON_API_KEY,
-    }
-
-    data = _api_get(url, params)
-    results = data.get("results", [])
-    return results[0] if results else None
 
 
 def _calc_dte(expiration: str) -> int:
@@ -86,64 +37,117 @@ def _calc_dte(expiration: str) -> int:
     return (exp_date - datetime.now()).days
 
 
-def _prefilter_contracts(contracts: list[dict]) -> list[dict]:
-    """DTE条件でフィルタし、直近満期順にソート。
-    無料プランではOIが取得できないため、OIフィルタはbar取得後に行う。
-    """
-    candidates = []
-    for c in contracts:
-        exp = c.get("expiration_date", "")
-        if not exp:
-            continue
-        dte = _calc_dte(exp)
-        if dte < 0 or dte > config.MAX_DTE:
-            continue
-        candidates.append(c)
+def _get_option_snapshots(ticker: str) -> dict:
+    """Alpaca Options Snapshots APIで銘柄のオプションチェーンを取得"""
+    url = f"{config.ALPACA_DATA_URL}/v1beta1/options/snapshots/{ticker}"
+    params = {
+        "feed": "indicative",
+        "limit": 250,
+    }
 
-    # 直近満期順（活発な取引が多い）
-    candidates.sort(key=lambda c: c.get("expiration_date", ""))
+    all_snapshots = {}
+    page_token = None
 
-    # APIコール数を制限
-    return candidates[:config.MAX_CONTRACTS_PER_TICKER]
+    while True:
+        if page_token:
+            params["page_token"] = page_token
+
+        resp = requests.get(url, headers=_get_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        snapshots = data.get("snapshots", {})
+        all_snapshots.update(snapshots)
+
+        page_token = data.get("next_page_token")
+        if not page_token:
+            break
+
+    return all_snapshots
+
+
+def _parse_contract_symbol(symbol: str) -> dict | None:
+    """オプションシンボルをパース (例: AAPL260410C00200000)"""
+    # O:AAPL260410C00200000 形式の場合
+    if symbol.startswith("O:"):
+        symbol = symbol[2:]
+
+    # 末尾からパース: 8桁価格 + 1桁C/P + 6桁日付 + ティッカー
+    if len(symbol) < 16:
+        return None
+
+    try:
+        price_str = symbol[-8:]
+        side_char = symbol[-9]
+        date_str = symbol[-15:-9]
+        underlying = symbol[:-15]
+
+        strike = int(price_str) / 1000
+        exp_date = datetime.strptime(date_str, "%y%m%d").strftime("%Y-%m-%d")
+        side = "call" if side_char == "C" else "put"
+
+        return {
+            "underlying": underlying,
+            "expiration": exp_date,
+            "strike": strike,
+            "side": side,
+        }
+    except (ValueError, IndexError):
+        return None
 
 
 def scan_ticker(ticker: str) -> list[OptionFlow]:
     """1銘柄をスキャンし、条件を満たすフローを返す"""
     try:
-        contracts = _get_option_contracts(ticker)
+        snapshots = _get_option_snapshots(ticker)
     except requests.RequestException as e:
-        print(f"[ERROR] {ticker} contracts取得失敗: {e}")
+        print(f"[ERROR] {ticker} snapshot取得失敗: {e}")
         return []
 
-    if not contracts:
+    if not snapshots:
+        print(f"  {ticker}: no snapshots")
         return []
 
-    candidates = _prefilter_contracts(contracts)
-    print(f"  {ticker}: {len(contracts)} contracts → {len(candidates)} candidates")
-
+    print(f"  {ticker}: {len(snapshots)} options found")
     flows = []
-    for contract in candidates:
-        contract_ticker = contract.get("ticker", "")
-        expiration = contract.get("expiration_date", "")
-        strike = contract.get("strike_price", 0)
-        open_interest = contract.get("open_interest", 0)
 
-        try:
-            bar = _get_contract_bar(contract_ticker)
-        except requests.RequestException as e:
-            print(f"  [WARN] {contract_ticker} スキップ: {e}")
+    for symbol, snap in snapshots.items():
+        parsed = _parse_contract_symbol(symbol)
+        if not parsed:
             continue
 
-        if not bar:
+        # CALLのみ
+        if parsed["side"] != config.SIDE_FILTER:
             continue
 
-        volume = bar.get("v", 0)
-        close_price = bar.get("c", 0)
-
-        if volume <= 0 or close_price <= 0:
+        # DTE チェック
+        dte = _calc_dte(parsed["expiration"])
+        if dte < 0 or dte > config.MAX_DTE:
             continue
 
-        # OIが取得できない場合（無料プラン）はVol/OI比チェックをスキップ
+        # latest_trade から出来高取得はできないので day を使う
+        # Alpaca snapshot には greeks, latestTrade, latestQuote がある
+        latest_trade = snap.get("latestTrade", {})
+        latest_quote = snap.get("latestQuote", {})
+
+        volume = snap.get("dayVolume", 0) or 0
+        open_interest = snap.get("openInterest", 0) or 0
+
+        if volume <= 0:
+            continue
+
+        # 価格の取得（最新取引価格 or ミッドポイント）
+        price = latest_trade.get("p", 0)
+        if price <= 0:
+            bid = latest_quote.get("bp", 0)
+            ask = latest_quote.get("ap", 0)
+            if bid > 0 and ask > 0:
+                price = (bid + ask) / 2
+
+        if price <= 0:
+            continue
+
+        # Vol/OI比
         if open_interest > 0:
             vol_oi = volume / open_interest
             if vol_oi < config.MIN_VOLUME_OI_RATIO:
@@ -151,23 +155,22 @@ def scan_ticker(ticker: str) -> list[OptionFlow]:
         else:
             vol_oi = 0.0
 
-        premium = volume * close_price * 100
+        # プレミアム推定
+        premium = volume * price * 100
         if premium < config.MIN_PREMIUM_USD:
             continue
 
-        print(f"    ✅ {contract_ticker} | Vol:{int(volume):,} | Premium:${premium/1000:.1f}K")
-
         flows.append(OptionFlow(
             ticker=ticker,
-            contract=contract_ticker,
-            strike=strike,
-            expiration=expiration,
-            dte=_calc_dte(expiration),
-            volume=int(volume),
-            open_interest=int(open_interest),
+            contract=symbol,
+            strike=parsed["strike"],
+            expiration=parsed["expiration"],
+            dte=dte,
+            volume=volume,
+            open_interest=open_interest,
             volume_oi_ratio=round(vol_oi, 2),
             premium=round(premium, 2),
-            side=contract.get("contract_type", "call").lower(),
+            side=parsed["side"],
         ))
 
     return flows
