@@ -87,24 +87,23 @@ def _calc_dte(expiration: str) -> int:
 
 
 def _prefilter_contracts(contracts: list[dict]) -> list[dict]:
-    """OIが低すぎる契約を事前に除外し、OI昇順でソート（OIが低い＝Vol/OI比が高くなりやすい）
-    これにより、APIコール数を最小限に抑える。
+    """DTE条件でフィルタし、直近満期順にソート。
+    無料プランではOIが取得できないため、OIフィルタはbar取得後に行う。
     """
     candidates = []
     for c in contracts:
-        oi = c.get("open_interest", 0)
         exp = c.get("expiration_date", "")
-        if oi <= 0 or not exp:
+        if not exp:
             continue
         dte = _calc_dte(exp)
         if dte < 0 or dte > config.MAX_DTE:
             continue
         candidates.append(c)
 
-    # OI昇順（Vol/OI比が高くなりやすい順）
-    candidates.sort(key=lambda c: c.get("open_interest", 0))
+    # 直近満期順（活発な取引が多い）
+    candidates.sort(key=lambda c: c.get("expiration_date", ""))
 
-    # APIコール数を制限（上位N件のみ詳細取得）
+    # APIコール数を制限
     return candidates[:config.MAX_CONTRACTS_PER_TICKER]
 
 
@@ -144,13 +143,19 @@ def scan_ticker(ticker: str) -> list[OptionFlow]:
         if volume <= 0 or close_price <= 0:
             continue
 
-        vol_oi = volume / open_interest
-        if vol_oi < config.MIN_VOLUME_OI_RATIO:
-            continue
+        # OIが取得できない場合（無料プラン）はVol/OI比チェックをスキップ
+        if open_interest > 0:
+            vol_oi = volume / open_interest
+            if vol_oi < config.MIN_VOLUME_OI_RATIO:
+                continue
+        else:
+            vol_oi = 0.0
 
         premium = volume * close_price * 100
         if premium < config.MIN_PREMIUM_USD:
             continue
+
+        print(f"    ✅ {contract_ticker} | Vol:{int(volume):,} | Premium:${premium/1000:.1f}K")
 
         flows.append(OptionFlow(
             ticker=ticker,
