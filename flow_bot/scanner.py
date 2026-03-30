@@ -1,11 +1,15 @@
 """Unusual Options Flow Scanner - Polygon.io APIからオプションデータを取得・フィルタリング"""
 
+import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 import requests
 
 import config
+
+# 無料プランのレート制限対応（5 calls/min）
+API_CALL_DELAY = 13  # 秒
 
 
 @dataclass
@@ -21,6 +25,14 @@ class OptionFlow:
     volume_oi_ratio: float
     premium: float
     side: str  # "call" or "put"
+
+
+def _api_get(url: str, params: dict) -> dict:
+    """API呼び出し（レート制限対応付き）"""
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    time.sleep(API_CALL_DELAY)
+    return resp.json()
 
 
 def _get_option_contracts(ticker: str) -> list[dict]:
@@ -39,47 +51,24 @@ def _get_option_contracts(ticker: str) -> list[dict]:
         "apiKey": config.POLYGON_API_KEY,
     }
 
-    contracts = []
-    while url:
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        contracts.extend(data.get("results", []))
-        # ページネーション
-        next_url = data.get("next_url")
-        if next_url:
-            url = next_url
-            params = {"apiKey": config.POLYGON_API_KEY}
-        else:
-            break
-
-    return contracts
+    data = _api_get(url, params)
+    return data.get("results", [])
 
 
-def _get_snapshot(ticker: str) -> list[dict]:
-    """オプションチェーンのスナップショット（volume, OI, last price）を取得"""
-    url = (
-        f"{config.POLYGON_BASE_URL}/v3/snapshot/options/{ticker}"
-    )
+def _get_contract_details(contract_ticker: str) -> dict | None:
+    """個別契約のdaily barを取得（前日の出来高・終値）"""
+    # 前営業日のデータを取得
+    url = f"{config.POLYGON_BASE_URL}/v2/aggs/ticker/{contract_ticker}/prev"
     params = {
-        "limit": 250,
+        "adjusted": "true",
         "apiKey": config.POLYGON_API_KEY,
     }
 
-    results = []
-    while url:
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        results.extend(data.get("results", []))
-        next_url = data.get("next_url")
-        if next_url:
-            url = next_url
-            params = {"apiKey": config.POLYGON_API_KEY}
-        else:
-            break
-
-    return results
+    data = _api_get(url, params)
+    results = data.get("results", [])
+    if results:
+        return results[0]
+    return None
 
 
 def _calc_dte(expiration: str) -> int:
@@ -88,83 +77,70 @@ def _calc_dte(expiration: str) -> int:
     return (exp_date - datetime.now()).days
 
 
-def _passes_filters(snap: dict) -> bool:
-    """検出条件を満たすか判定"""
-    details = snap.get("details", {})
-    day = snap.get("day", {})
-
-    # CALLのみ
-    if details.get("contract_type", "").lower() != config.SIDE_FILTER:
-        return False
-
-    # DTE チェック
-    expiration = details.get("expiration_date", "")
-    if not expiration:
-        return False
-    dte = _calc_dte(expiration)
-    if dte < 0 or dte > config.MAX_DTE:
-        return False
-
-    volume = day.get("volume", 0)
-    open_interest = snap.get("open_interest", 0)
-
-    # Volume/OI比
-    if open_interest <= 0:
-        return False
-    vol_oi = volume / open_interest
-    if vol_oi < config.MIN_VOLUME_OI_RATIO:
-        return False
-
-    # プレミアム推定 (volume × last_price × 100)
-    last_price = snap.get("last_quote", {}).get("midpoint", 0)
-    if last_price <= 0:
-        last_price = day.get("close", 0)
-    premium = volume * last_price * 100
-    if premium < config.MIN_PREMIUM_USD:
-        return False
-
-    return True
-
-
-def _to_option_flow(snap: dict, ticker: str) -> OptionFlow:
-    """スナップショットデータをOptionFlowに変換"""
-    details = snap.get("details", {})
-    day = snap.get("day", {})
-
-    expiration = details.get("expiration_date", "")
-    volume = day.get("volume", 0)
-    open_interest = snap.get("open_interest", 0)
-
-    last_price = snap.get("last_quote", {}).get("midpoint", 0)
-    if last_price <= 0:
-        last_price = day.get("close", 0)
-
-    return OptionFlow(
-        ticker=ticker,
-        contract=details.get("ticker", ""),
-        strike=details.get("strike_price", 0),
-        expiration=expiration,
-        dte=_calc_dte(expiration),
-        volume=volume,
-        open_interest=open_interest,
-        volume_oi_ratio=round(volume / max(open_interest, 1), 2),
-        premium=round(volume * last_price * 100, 2),
-        side=details.get("contract_type", "").lower(),
-    )
-
-
 def scan_ticker(ticker: str) -> list[OptionFlow]:
     """1銘柄をスキャンし、条件を満たすフローを返す"""
     try:
-        snapshots = _get_snapshot(ticker)
+        contracts = _get_option_contracts(ticker)
     except requests.RequestException as e:
-        print(f"[ERROR] {ticker} snapshot取得失敗: {e}")
+        print(f"[ERROR] {ticker} contracts取得失敗: {e}")
         return []
 
+    if not contracts:
+        return []
+
+    print(f"  {ticker}: {len(contracts)} contracts found, checking details...")
     flows = []
-    for snap in snapshots:
-        if _passes_filters(snap):
-            flows.append(_to_option_flow(snap, ticker))
+
+    for contract in contracts:
+        contract_ticker = contract.get("ticker", "")
+        expiration = contract.get("expiration_date", "")
+        strike = contract.get("strike_price", 0)
+
+        if not contract_ticker or not expiration:
+            continue
+
+        dte = _calc_dte(expiration)
+        if dte < 0 or dte > config.MAX_DTE:
+            continue
+
+        try:
+            bar = _get_contract_details(contract_ticker)
+        except requests.RequestException as e:
+            print(f"  [WARN] {contract_ticker} スキップ: {e}")
+            continue
+
+        if not bar:
+            continue
+
+        volume = bar.get("v", 0)
+        close_price = bar.get("c", 0)
+
+        # OIはcontracts APIのopen_interestを使用
+        open_interest = contract.get("open_interest", 0)
+
+        # フィルタリング
+        if open_interest <= 0:
+            continue
+        vol_oi = volume / open_interest
+        if vol_oi < config.MIN_VOLUME_OI_RATIO:
+            continue
+
+        premium = volume * close_price * 100
+        if premium < config.MIN_PREMIUM_USD:
+            continue
+
+        flows.append(OptionFlow(
+            ticker=ticker,
+            contract=contract_ticker,
+            strike=strike,
+            expiration=expiration,
+            dte=dte,
+            volume=int(volume),
+            open_interest=int(open_interest),
+            volume_oi_ratio=round(vol_oi, 2),
+            premium=round(premium, 2),
+            side=contract.get("contract_type", "call").lower(),
+        ))
 
     return flows
 

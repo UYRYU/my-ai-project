@@ -7,61 +7,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "flow_bot"))
 
 import config
-from scanner import _passes_filters, _calc_dte, _to_option_flow, scan_ticker
-
-
-def _make_snapshot(**overrides):
-    """テスト用スナップショットデータを生成"""
-    snap = {
-        "details": {
-            "contract_type": "call",
-            "expiration_date": "2026-04-10",
-            "strike_price": 200.0,
-            "ticker": "O:AAPL260410C00200000",
-        },
-        "day": {
-            "volume": 5000,
-            "close": 3.50,
-        },
-        "open_interest": 500,
-        "last_quote": {
-            "midpoint": 3.50,
-        },
-    }
-    # Apply overrides with nested merge
-    for key, value in overrides.items():
-        if isinstance(value, dict) and key in snap:
-            snap[key].update(value)
-        else:
-            snap[key] = value
-    return snap
-
-
-class TestPassesFilters:
-    def test_valid_flow_passes(self):
-        """条件を満たすフローはTrue"""
-        snap = _make_snapshot()
-        assert _passes_filters(snap) is True
-
-    def test_put_rejected(self):
-        """PUTは除外"""
-        snap = _make_snapshot(details={"contract_type": "put", "expiration_date": "2026-04-10", "strike_price": 200.0, "ticker": "X"})
-        assert _passes_filters(snap) is False
-
-    def test_low_volume_oi_rejected(self):
-        """Vol/OI比 < 5 は除外"""
-        snap = _make_snapshot(open_interest=5000)  # 5000/5000 = 1.0
-        assert _passes_filters(snap) is False
-
-    def test_low_premium_rejected(self):
-        """プレミアム < $100k は除外"""
-        snap = _make_snapshot(**{"day": {"volume": 100, "close": 1.0}, "last_quote": {"midpoint": 1.0}})
-        assert _passes_filters(snap) is False
-
-    def test_zero_oi_rejected(self):
-        """OI = 0 は除外"""
-        snap = _make_snapshot(open_interest=0)
-        assert _passes_filters(snap) is False
+from scanner import OptionFlow, _calc_dte, scan_ticker
 
 
 class TestCalcDte:
@@ -76,20 +22,6 @@ class TestCalcDte:
         assert dte < 0
 
 
-class TestToOptionFlow:
-    def test_conversion(self):
-        """スナップショットからOptionFlowへの変換"""
-        snap = _make_snapshot()
-        flow = _to_option_flow(snap, "AAPL")
-        assert flow.ticker == "AAPL"
-        assert flow.strike == 200.0
-        assert flow.side == "call"
-        assert flow.volume == 5000
-        assert flow.open_interest == 500
-        assert flow.volume_oi_ratio == 10.0
-        assert flow.premium == 5000 * 3.50 * 100
-
-
 class TestScanTicker:
     @patch("scanner.requests.get")
     def test_api_error_returns_empty(self, mock_get):
@@ -99,12 +31,55 @@ class TestScanTicker:
         result = scan_ticker("AAPL")
         assert result == []
 
-    @patch("scanner.requests.get")
-    def test_no_results(self, mock_get):
-        """結果なしの場合は空リスト"""
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"results": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
+    @patch("scanner._api_get")
+    def test_no_contracts(self, mock_api):
+        """契約なしの場合は空リスト"""
+        mock_api.return_value = {"results": []}
+        result = scan_ticker("AAPL")
+        assert result == []
+
+    @patch("scanner._api_get")
+    def test_detects_unusual_flow(self, mock_api):
+        """条件を満たすフローが検出される"""
+        from datetime import datetime, timedelta
+        exp = (datetime.now() + timedelta(days=15)).strftime("%Y-%m-%d")
+        contracts_resp = {"results": [{
+            "ticker": "O:AAPL260410C00200000",
+            "expiration_date": exp,
+            "strike_price": 200.0,
+            "contract_type": "call",
+            "open_interest": 500,
+        }]}
+        bar_resp = {"results": [{
+            "v": 5000,
+            "c": 3.50,
+        }]}
+
+        mock_api.side_effect = [contracts_resp, bar_resp]
+        result = scan_ticker("AAPL")
+        assert len(result) == 1
+        assert result[0].ticker == "AAPL"
+        assert result[0].volume == 5000
+        assert result[0].volume_oi_ratio == 10.0
+        assert result[0].premium == 5000 * 3.50 * 100
+
+    @patch("scanner._api_get")
+    def test_filters_low_vol_oi(self, mock_api):
+        """Vol/OI比が低い場合は除外"""
+        from datetime import datetime, timedelta
+        exp = (datetime.now() + timedelta(days=15)).strftime("%Y-%m-%d")
+        contracts_resp = {"results": [{
+            "ticker": "O:AAPL260410C00200000",
+            "expiration_date": exp,
+            "strike_price": 200.0,
+            "contract_type": "call",
+            "open_interest": 5000,
+        }]}
+        bar_resp = {"results": [{
+            "v": 100,  # vol/oi = 0.02
+            "c": 3.50,
+        }]}
+
+        mock_api.side_effect = [contracts_resp, bar_resp]
         result = scan_ticker("AAPL")
         assert result == []
