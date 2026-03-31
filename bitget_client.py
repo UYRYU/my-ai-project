@@ -55,10 +55,13 @@ class BitgetClient:
         body = json.dumps(data)
         headers = self._headers("POST", path, body)
         resp = self.session.post(f"{BASE_URL}{path}", data=body, headers=headers, timeout=10)
-        resp.raise_for_status()
-        result = resp.json()
+        try:
+            result = resp.json()
+        except Exception:
+            resp.raise_for_status()
+            raise
         if result.get("code") != "00000":
-            raise ValueError(f"API error: {result.get('msg')} ({result.get('code')})")
+            raise ValueError(f"Bitget API: {result.get('msg')} (code:{result.get('code')})")
         return result
 
     # === 公開API ===
@@ -162,9 +165,7 @@ class BitgetClient:
         stop_loss: str | None = None,
         reduce_only: bool = False,
     ) -> dict:
-        # Bitget: side = "buy"/"sell", tradeSide = "open"/"close"
         bg_side = side.lower()  # "Buy" -> "buy", "Sell" -> "sell"
-        trade_side = "close" if reduce_only else "open"
 
         data = {
             "symbol": symbol,
@@ -172,9 +173,9 @@ class BitgetClient:
             "marginMode": "crossed",
             "marginCoin": "USDT",
             "side": bg_side,
-            "tradeSide": trade_side,
-            "orderType": order_type.lower(),  # "market" or "limit"
+            "orderType": order_type.lower(),
             "size": qty,
+            "force": "gtc" if order_type.lower() == "limit" else "ioc",
         }
         if price:
             data["price"] = price
