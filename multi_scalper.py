@@ -158,15 +158,17 @@ def calc_qty(price: float, available: float, state: CoinState, use_multiplier: b
     if use_multiplier:
         qty *= state.bet_multiplier
 
-    # Bitget最低5USDT保証
-    min_notional = 5.0 if EXCHANGE == 'bitget' else 0
+    # Bitget最低5USDT保証（切り上げ）
+    min_notional = 5.5 if EXCHANGE == 'bitget' else 0
     min_qty_by_notional = (min_notional / price) if price > 0 and min_notional > 0 else 0
 
     if state.qty_step > 0:
         qty = int(qty / state.qty_step) * state.qty_step
     qty = max(qty, state.min_qty, min_qty_by_notional)
+    # 切り上げ（最低金額を確実に超える）
     if state.qty_step > 0:
-        qty = max(int(qty / state.qty_step), 1) * state.qty_step
+        import math as _math
+        qty = _math.ceil(qty / state.qty_step) * state.qty_step
 
     if state.qty_step >= 1:
         return str(int(qty))
