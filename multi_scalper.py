@@ -641,7 +641,10 @@ class MultiScalper:
     def _record_trade(self, symbol: str, pnl_pct: float, exit_price: float, reason: str):
         state = self.states[symbol]
         qty_float = float(state.qty)
-        pnl_usd = state.entry_price * qty_float * (pnl_pct / 100)
+        # 手数料控除 (Bitget: テイカー0.06% × 往復 = 0.12%)
+        fee_pct = 0.12 if EXCHANGE == 'bitget' else 0.0
+        net_pnl_pct = pnl_pct - fee_pct
+        pnl_usd = state.entry_price * qty_float * (net_pnl_pct / 100)
         elapsed = time.time() - state.entry_time
 
         # 固定ベット(1.0倍)だった場合のPnL計算（比較用）
