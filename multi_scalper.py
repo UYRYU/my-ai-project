@@ -295,7 +295,7 @@ def scan_volatile_coins(top_n: int = 10) -> list[dict]:
 
 
 # === 取引対象通貨 ===
-SYMBOLS = getattr(cfg, 'SYMBOLS', [cfg.SYMBOL])
+SYMBOLS = getattr(cfg, 'SYMBOLS', [])
 if isinstance(SYMBOLS, str):
     SYMBOLS = [SYMBOLS]
 
