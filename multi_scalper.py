@@ -310,27 +310,6 @@ if isinstance(SYMBOLS, str):
     SYMBOLS = [SYMBOLS]
 
 
-@dataclass
-class ShadowPosition:
-    """パターンB仮想ポジション"""
-    side: str = ""
-    entry_price: float = 0.0
-    entry_time: float = 0.0
-    mode: str = ""
-
-
-@dataclass
-class ShadowStats:
-    """パターンB（ブレイクアウト付き）の仮想トレード統計"""
-    wins: int = 0
-    losses: int = 0
-    pnl_usd: float = 0.0
-    bet_multiplier: float = 1.0
-    pnl_usd_fixed: float = 0.0
-    position: ShadowPosition = field(default_factory=ShadowPosition)
-    last_loss_time: float = 0.0
-
-
 class MultiScalper:
     def __init__(self):
         if EXCHANGE == 'bitget':
@@ -339,7 +318,6 @@ class MultiScalper:
         else:
             self.client = BybitClient(cfg.API_KEY, cfg.API_SECRET)
         self.states: dict[str, CoinState] = {}
-        self.shadows: dict[str, ShadowStats] = {}  # パターンB仮想トレード
         self.available_balance = 100.0
         self.running = False
         self.lock = threading.Lock()
@@ -356,7 +334,6 @@ class MultiScalper:
             state.tick_size = float(pf.get("tickSize", 0.0001))
 
             self.states[symbol] = state
-            self.shadows[symbol] = ShadowStats()
             log(symbol, f"初期化OK: 最小={state.min_qty}, 刻み={state.qty_step}")
             return True
         except Exception as e:
@@ -418,17 +395,9 @@ class MultiScalper:
                 log("SCANNER", f"除外: {sym} (倍率1.0、入れ替え)")
                 remove.add(sym)
 
-        # シャドウポジション保有中も考慮
-        for sym, shadow in self.shadows.items():
-            if shadow.position.side:
-                keep.add(sym)
-                remove.discard(sym)
-
         # 削除
         for sym in remove:
             del self.states[sym]
-            if sym in self.shadows:
-                del self.shadows[sym]
 
         # 新規追加 (MAX_COINSまで)
         current = set(self.states.keys())
@@ -699,72 +668,6 @@ class MultiScalper:
         state.position_side = ""
         state.entry_price = 0.0
 
-    def shadow_check(self, symbol: str, price: float):
-        """パターンB: ブレイクアウト付きロジックの仮想トレード"""
-        state = self.states[symbol]
-        shadow = self.shadows[symbol]
-
-        if shadow.position.side:
-            # 仮想ポジション決済チェック
-            tp_pct, sl_pct = self.get_entry_params(symbol, shadow.position.side)
-            if shadow.position.side == "long":
-                tp_hit = price >= shadow.position.entry_price * (1 + tp_pct / 100)
-                sl_hit = price <= shadow.position.entry_price * (1 - sl_pct / 100)
-            else:
-                tp_hit = price <= shadow.position.entry_price * (1 - tp_pct / 100)
-                sl_hit = price >= shadow.position.entry_price * (1 + sl_pct / 100)
-
-            if tp_hit or sl_hit:
-                pnl_pct = tp_pct if tp_hit else -sl_pct
-                base_qty = float(calc_qty(shadow.position.entry_price, self.available_balance, state, use_multiplier=False))
-                pnl_fixed = shadow.position.entry_price * base_qty * (pnl_pct / 100)
-                pnl_prog = shadow.position.entry_price * base_qty * shadow.bet_multiplier * (pnl_pct / 100)
-                shadow.pnl_usd += pnl_prog
-                shadow.pnl_usd_fixed += pnl_fixed
-                if tp_hit:
-                    shadow.wins += 1
-                    shadow.bet_multiplier = max(1.0, shadow.bet_multiplier - 0.5)
-                else:
-                    shadow.losses += 1
-                    if shadow.bet_multiplier >= 2.0:
-                        shadow.bet_multiplier = 1.0
-                    else:
-                        shadow.bet_multiplier = min(2.0, shadow.bet_multiplier + 0.1)
-                    shadow.last_loss_time = time.time()
-                shadow.position = ShadowPosition()
-        else:
-            # 仮想エントリーチェック
-            if state.upper == 0 or state.lower == 0:
-                return
-            if shadow.last_loss_time > 0 and time.time() - shadow.last_loss_time < cfg.COOLDOWN_SEC:
-                return
-
-            width = state.upper - state.lower
-            side = None
-            range_pos = (price - state.lower) / width if width > 0 else 0.5
-
-            if state.mode == "range":
-                if range_pos <= 0.30:
-                    side = "long"
-                elif range_pos >= 0.70:
-                    side = "short"
-            elif state.mode == "trend_up":
-                if range_pos <= 0.60:
-                    side = "long"
-                elif range_pos >= 1.0:
-                    side = "long"  # ブレイクアウト
-            elif state.mode == "trend_down":
-                if range_pos >= 0.40:
-                    side = "short"
-                elif range_pos <= 0.0:
-                    side = "short"  # ブレイクアウト
-
-            if side:
-                shadow.position = ShadowPosition(
-                    side=side, entry_price=price,
-                    entry_time=time.time(), mode=state.mode,
-                )
-
     def print_dashboard(self):
         """全通貨のダッシュボード"""
         total_pnl = 0
@@ -787,37 +690,11 @@ class MultiScalper:
                 f"(固定:${s.pnl_usd_fixed:>+5.2f}) 倍率:{s.bet_multiplier:.1f}x{pos}"
             )
 
-        # パターンB集計
-        total_b_pnl = 0
-        total_b_trades = 0
-        b_lines = []
-        for sym, sh in self.shadows.items():
-            s = self.states[sym]
-            mode_icon = {"range": "⇄", "trend_up": "↑", "trend_down": "↓"}.get(s.mode, "?")
-            b_total = sh.wins + sh.losses
-            wr = sh.wins / max(b_total, 1) * 100
-            total_b_pnl += sh.pnl_usd
-            total_b_trades += b_total
-            pos = f" {sh.position.side[0].upper()}@{sh.position.entry_price:.4f}" if sh.position.side else ""
-            b_lines.append(
-                f"  {sym:12s} {mode_icon} "
-                f"| {sh.wins}W{sh.losses}L {wr:>4.0f}% ${sh.pnl_usd:>+6.2f} "
-                f"倍率:{sh.bet_multiplier:.1f}x{pos}"
-            )
-
         print(f"\r\n{'='*75}")
-        print(f"  【A】押し目/戻りのみ  | PnL: ${total_pnl:+.2f} (固定:${total_pnl_fixed:+.2f}) | {total_trades}回")
+        print(f"  ダッシュボード | PnL: ${total_pnl:+.2f} (固定:${total_pnl_fixed:+.2f}) | {total_trades}回")
         print(f"{'='*75}")
         for line in lines:
             print(line)
-        print(f"{'='*75}")
-        print(f"  【B】+ブレイクアウト   | PnL: ${total_b_pnl:+.2f} | {total_b_trades}回")
-        print(f"{'='*75}")
-        for line in b_lines:
-            print(line)
-        winner = "A" if total_pnl >= total_b_pnl else "B"
-        diff = abs(total_pnl - total_b_pnl)
-        print(f"  >>> 現在の勝者: パターン{winner} (差額:${diff:.2f})")
         print(f"{'='*75}")
 
     def run(self):
@@ -926,9 +803,6 @@ class MultiScalper:
                         else:
                             self.check_entry(sym, price)
 
-                        # パターンB仮想トレード
-                        if sym in self.shadows:
-                            self.shadow_check(sym, price)
 
                     except Exception as e:
                         log(sym, f"エラー: {e}")
