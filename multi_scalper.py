@@ -328,16 +328,28 @@ class MultiScalper:
 
         new_symbols = [c["symbol"] for c in top[:MAX_COINS]]
 
-        # ポジション保有中のコインは残す
+        # 入れ替え判定
         keep = set()
         remove = set()
         for sym, state in self.states.items():
             if state.in_position:
+                # ポジション保有中 → 必ず残す
                 keep.add(sym)
-            elif sym not in new_symbols:
+            elif sym in new_symbols:
+                # 新リストにもある → 残す
+                keep.add(sym)
+            elif state.pnl_usd > 0:
+                # トータル勝ち → 即入れ替えOK
+                log("SCANNER", f"除外: {sym} (トータル${state.pnl_usd:+.2f}で利確撤退)")
                 remove.add(sym)
-            else:
+            elif state.bet_multiplier > 1.0:
+                # 倍率1.1以上 → 回収するまで居残り
+                log("SCANNER", f"居残り: {sym} (倍率{state.bet_multiplier:.1f}x、回収待ち)")
                 keep.add(sym)
+            else:
+                # 倍率1.0 & トータル0以下 → 入れ替えOK
+                log("SCANNER", f"除外: {sym} (倍率1.0、入れ替え)")
+                remove.add(sym)
 
         # シャドウポジション保有中も考慮
         for sym, shadow in self.shadows.items():
@@ -347,7 +359,6 @@ class MultiScalper:
 
         # 削除
         for sym in remove:
-            log("SCANNER", f"除外: {sym}")
             del self.states[sym]
             if sym in self.shadows:
                 del self.shadows[sym]
@@ -572,8 +583,12 @@ class MultiScalper:
             state.bet_multiplier = max(1.0, state.bet_multiplier - 0.5)
         else:
             state.losses += 1
-            # 負け → 倍率 +0.1
-            state.bet_multiplier += 0.1
+            # 負け → 倍率 +0.1 (上限2.0、2.0で負けたら1.0リセット)
+            if state.bet_multiplier >= 2.0:
+                state.bet_multiplier = 1.0
+                log(symbol, "倍率2.0上限到達 → 1.0にリセット")
+            else:
+                state.bet_multiplier = min(2.0, state.bet_multiplier + 0.1)
 
         trade = {
             "time": datetime.now(timezone.utc).isoformat(),
@@ -635,7 +650,10 @@ class MultiScalper:
                     shadow.bet_multiplier = max(1.0, shadow.bet_multiplier - 0.5)
                 else:
                     shadow.losses += 1
-                    shadow.bet_multiplier += 0.1
+                    if shadow.bet_multiplier >= 2.0:
+                        shadow.bet_multiplier = 1.0
+                    else:
+                        shadow.bet_multiplier = min(2.0, shadow.bet_multiplier + 0.1)
                     shadow.last_loss_time = time.time()
                 shadow.position = ShadowPosition()
         else:
