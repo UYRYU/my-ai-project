@@ -276,17 +276,23 @@ class MultiScalper:
 
         elif state.mode == "trend_up":
             # === 上昇トレンド: 順張りロング ===
-            # BB下半分(60%以下)まで押したらロング
+            # 1) 押し目買い: BB60%以下でロング
+            # 2) ブレイクアウト: BB上限突破でロング
             range_pos = (price - state.lower) / width if width > 0 else 0.5
             if range_pos <= 0.60:
                 side = "long"
+            elif range_pos >= 1.0:
+                side = "long"  # ブレイクアウト
 
         elif state.mode == "trend_down":
             # === 下降トレンド: 順張りショート ===
-            # BB上半分(40%以上)まで戻したらショート
+            # 1) 戻り売り: BB40%以上でショート
+            # 2) ブレイクアウト: BB下限突破でショート
             range_pos = (price - state.lower) / width if width > 0 else 0.5
             if range_pos >= 0.40:
                 side = "short"
+            elif range_pos <= 0.0:
+                side = "short"  # ブレイクアウト
 
         if side:
             self.open_position(symbol, side, price)
