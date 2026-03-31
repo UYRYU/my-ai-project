@@ -16,7 +16,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bybit_client import BybitClient
+from bitget_client import BitgetClient
 import bybit_config as cfg
+
+# === 取引所切替 ===
+EXCHANGE = getattr(cfg, 'EXCHANGE', 'bybit')  # 'bybit' or 'bitget'
 
 
 # === 自動選定の設定 ===
@@ -163,40 +167,80 @@ def calc_qty(price: float, available: float, state: CoinState, use_multiplier: b
 
 
 # === ボラティリティスキャナー ===
-def scan_volatile_coins(top_n: int = 10) -> list[dict]:
-    """Bybit先物からボラの高い通貨TOP Nを自動選定"""
-    try:
-        resp = requests.get(
-            "https://api.bybit.com/v5/market/tickers?category=linear",
-            timeout=15,
-        )
-        resp.raise_for_status()
-        tickers = resp.json().get("result", {}).get("list", [])
-    except Exception as e:
-        log("SCANNER", f"ティッカー取得エラー: {e}")
-        return []
-
-    candidates = []
-    for t in tickers:
+def _fetch_tickers_bybit() -> list[dict]:
+    resp = requests.get("https://api.bybit.com/v5/market/tickers?category=linear", timeout=15)
+    resp.raise_for_status()
+    results = []
+    for t in resp.json().get("result", {}).get("list", []):
         sym = t.get("symbol", "")
         if not sym.endswith("USDT"):
             continue
         try:
-            high = float(t.get("highPrice24h", 0))
-            low = float(t.get("lowPrice24h", 0))
-            last = float(t.get("lastPrice", 0))
+            high, low, last = float(t.get("highPrice24h", 0)), float(t.get("lowPrice24h", 0)), float(t.get("lastPrice", 0))
             vol = float(t.get("turnover24h", 0))
-            if low <= 0 or last <= 0 or vol < MIN_VOLUME_USDT:
-                continue
-            vol_pct = ((high - low) / low) * 100
-            if vol_pct < 3:  # ボラ3%以下は除外
-                continue
-            candidates.append({
-                "symbol": sym, "price": last,
-                "vol_pct": vol_pct, "volume": vol,
-            })
+            if low > 0 and last > 0:
+                results.append({"symbol": sym, "price": last, "vol_pct": ((high - low) / low) * 100, "volume": vol})
         except (ValueError, TypeError):
             continue
+    return results
+
+
+def _fetch_tickers_bitget() -> list[dict]:
+    resp = requests.get("https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES", timeout=15)
+    resp.raise_for_status()
+    results = []
+    for t in resp.json().get("data", []):
+        sym = t.get("symbol", "")
+        if not sym.endswith("USDT"):
+            continue
+        try:
+            high, low, last = float(t.get("high24h", 0)), float(t.get("low24h", 0)), float(t.get("lastPr", 0))
+            vol = float(t.get("quoteVolume", 0))
+            if low > 0 and last > 0:
+                results.append({"symbol": sym, "price": last, "vol_pct": ((high - low) / low) * 100, "volume": vol})
+        except (ValueError, TypeError):
+            continue
+    return results
+
+
+def _fetch_klines_closes(symbol: str) -> list[float]:
+    """K線のclose価格リストを取得（取引所に応じて切替）"""
+    if EXCHANGE == 'bitget':
+        resp = requests.get(
+            "https://api.bitget.com/api/v2/mix/market/candles",
+            params={"productType": "USDT-FUTURES", "symbol": symbol, "granularity": "15m", "limit": "96"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        klines_raw = resp.json().get("data", [])
+        if len(klines_raw) < 20:
+            return []
+        return [float(k[4]) for k in reversed(klines_raw)]
+    else:
+        resp = requests.get(
+            "https://api.bybit.com/v5/market/kline",
+            params={"category": "linear", "symbol": symbol, "interval": "15", "limit": 96},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        klines_raw = resp.json().get("result", {}).get("list", [])
+        if len(klines_raw) < 20:
+            return []
+        return [float(k[4]) for k in reversed(klines_raw)]
+
+
+def scan_volatile_coins(top_n: int = 10) -> list[dict]:
+    """先物からボラの高い通貨TOP Nを自動選定"""
+    try:
+        if EXCHANGE == 'bitget':
+            tickers = _fetch_tickers_bitget()
+        else:
+            tickers = _fetch_tickers_bybit()
+    except Exception as e:
+        log("SCANNER", f"ティッカー取得エラー: {e}")
+        return []
+
+    candidates = [t for t in tickers if t["vol_pct"] >= 3 and t["volume"] >= MIN_VOLUME_USDT]
 
     if not candidates:
         return []
@@ -209,16 +253,9 @@ def scan_volatile_coins(top_n: int = 10) -> list[dict]:
     results = []
     for c in candidates:
         try:
-            resp = requests.get(
-                "https://api.bybit.com/v5/market/kline",
-                params={"category": "linear", "symbol": c["symbol"], "interval": "15", "limit": 96},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            klines_raw = resp.json().get("result", {}).get("list", [])
-            if len(klines_raw) < 20:
+            closes = _fetch_klines_closes(c["symbol"])
+            if not closes:
                 continue
-            closes = [float(k[4]) for k in reversed(klines_raw)]
 
             # 中央クロス回数
             median_price = statistics.median(closes)
@@ -286,7 +323,11 @@ class ShadowStats:
 
 class MultiScalper:
     def __init__(self):
-        self.client = BybitClient(cfg.API_KEY, cfg.API_SECRET)
+        if EXCHANGE == 'bitget':
+            passphrase = getattr(cfg, 'API_PASSPHRASE', '')
+            self.client = BitgetClient(cfg.API_KEY, cfg.API_SECRET, passphrase)
+        else:
+            self.client = BybitClient(cfg.API_KEY, cfg.API_SECRET)
         self.states: dict[str, CoinState] = {}
         self.shadows: dict[str, ShadowStats] = {}  # パターンB仮想トレード
         self.available_balance = 100.0
@@ -768,12 +809,14 @@ class MultiScalper:
 
     def run(self):
         rotate_label = "ON" if AUTO_ROTATE else "OFF"
+        ex_name = EXCHANGE.upper()
         print(f"{'='*65}")
         print(f"  マルチ通貨アダプティブスキャルパー")
-        print(f"  モード: {'DRY RUN' if cfg.DRY_RUN else 'LIVE'}")
+        print(f"  取引所: {ex_name}")
+        print(f"  モード: {'DRY RUN' if cfg.DRY_RUN else '🔴 LIVE'}")
         print(f"  通貨: {', '.join(SYMBOLS)}")
         print(f"  レバレッジ: {cfg.LEVERAGE}x")
-        print(f"  戦略: レンジ→逆張り / トレンド→順張り (自動切替)")
+        print(f"  戦略: レンジ→逆張り / トレンド→順張り+ブレイクアウト")
         print(f"  自動銘柄選定: {rotate_label} ({ROTATE_INTERVAL//3600}h間隔)")
         print(f"{'='*65}")
 
