@@ -32,12 +32,7 @@ MIN_VOLUME_USDT = getattr(cfg, 'MIN_VOLUME_USDT', 500_000)  # 最低出来高
 
 # === 通貨別最適パラメータ (デフォルト値、自動選定時はこれを使う) ===
 COIN_PARAMS = {
-    "SIRENUSDT": {"tp_range": 1.5, "sl_range": 0.3, "tp_trend": 2.0, "sl_trend": 0.5},
-    "RDNTUSDT":  {"tp_range": 2.5, "sl_range": 1.0, "tp_trend": 2.5, "sl_trend": 0.8},
-    "VANRYUSDT": {"tp_range": 1.5, "sl_range": 0.8, "tp_trend": 2.0, "sl_trend": 0.5},
-    "ATHUSDT":   {"tp_range": 1.5, "sl_range": 1.0, "tp_trend": 2.0, "sl_trend": 0.8},
-    "JTOUSDT":   {"tp_range": 0.5, "sl_range": 0.5, "tp_trend": 1.5, "sl_trend": 0.5},
-    "ARCUSDT":   {"tp_range": 1.0, "sl_range": 0.8, "tp_trend": 2.0, "sl_trend": 0.5},
+    # デフォルト: TP 3.0%, SL 1.0% (損小利大 3:1)
 }
 
 
@@ -59,13 +54,11 @@ class CoinState:
     wins: int = 0
     losses: int = 0
     pnl_usd: float = 0.0
-    pnl_usd_fixed: float = 0.0   # 比較用：固定ベットだった場合のPnL
     last_loss_time: float = 0.0
     daily_trades: int = 0
     min_qty: float = 1.0
     qty_step: float = 1.0
     tick_size: float = 0.0001
-    bet_multiplier: float = 1.0   # プログレッシブベット倍率
     trade_history: list = field(default_factory=list)
 
 
@@ -144,7 +137,7 @@ def round_price(price: float, tick_size: float) -> str:
     return f"{price:.{decimals}f}"
 
 
-def calc_qty(price: float, available: float, state: CoinState, use_multiplier: bool = True) -> str:
+def calc_qty(price: float, available: float, state: CoinState) -> str:
     if cfg.FIXED_QTY > 0:
         qty = cfg.FIXED_QTY
     else:
@@ -153,10 +146,6 @@ def calc_qty(price: float, available: float, state: CoinState, use_multiplier: b
         margin = available * (per_coin_pct / 100)
         position_value = margin * cfg.LEVERAGE
         qty = position_value / price
-
-    # プログレッシブベット: 倍率を適用
-    if use_multiplier:
-        qty *= state.bet_multiplier
 
     # Bitget最低5USDT保証（切り上げ）
     min_notional = 5.5 if EXCHANGE == 'bitget' else 0
@@ -386,13 +375,9 @@ class MultiScalper:
                 # トータル勝ち → 即入れ替えOK
                 log("SCANNER", f"除外: {sym} (トータル${state.pnl_usd:+.2f}で利確撤退)")
                 remove.add(sym)
-            elif state.bet_multiplier > 1.0:
-                # 倍率1.1以上 → 回収するまで居残り
-                log("SCANNER", f"居残り: {sym} (倍率{state.bet_multiplier:.1f}x、回収待ち)")
-                keep.add(sym)
             else:
-                # 倍率1.0 & トータル0以下 → 入れ替えOK
-                log("SCANNER", f"除外: {sym} (倍率1.0、入れ替え)")
+                # トータル0以下 → 入れ替えOK
+                log("SCANNER", f"除外: {sym} (入れ替え)")
                 remove.add(sym)
 
         # 削除
@@ -449,30 +434,33 @@ class MultiScalper:
         except Exception as e:
             log(symbol, f"レンジ更新エラー: {e}")
 
-    def check_spread(self, symbol: str) -> bool:
+    def check_spread(self, symbol: str) -> tuple[bool, float]:
+        """スプレッドチェック。(OK?, スプレッド%)を返す"""
         try:
             book = self.client.get_orderbook(symbol, limit=1)
             bids = book.get("b", [])
             asks = book.get("a", [])
             if not bids or not asks:
-                return False
+                return False, 0.0
             bid = float(bids[0][0])
             ask = float(asks[0][0])
             mid = (bid + ask) / 2
-            spread = (ask - bid) / mid * 100 if mid > 0 else 999
-            return spread <= cfg.MAX_SPREAD_PCT
+            spread_pct = (ask - bid) / mid * 100 if mid > 0 else 999
+            # 厳格化: MAX_SPREAD_PCTの半分をデフォルト閾値に
+            max_spread = getattr(cfg, 'MAX_SPREAD_PCT', 0.1)
+            return spread_pct <= max_spread, spread_pct
         except Exception:
-            return True
+            return True, 0.0
 
     def get_entry_params(self, symbol: str, side: str) -> tuple[float, float]:
-        """モードに応じたTP/SLを返す"""
+        """モードに応じたTP/SLを返す (損小利大 3:1)"""
         state = self.states[symbol]
-        params = COIN_PARAMS.get(symbol, {"tp_range": 1.5, "sl_range": 0.5, "tp_trend": 2.0, "sl_trend": 0.5})
+        params = COIN_PARAMS.get(symbol, {"tp_range": 3.0, "sl_range": 1.0, "tp_trend": 3.0, "sl_trend": 1.0})
 
         if state.mode == "range":
-            return params.get("tp_range", 1.5), params.get("sl_range", 0.5)
+            return params.get("tp_range", 3.0), params.get("sl_range", 1.0)
         else:
-            return params.get("tp_trend", 2.0), params.get("sl_trend", 0.5)
+            return params.get("tp_trend", 3.0), params.get("sl_trend", 1.0)
 
     def check_entry(self, symbol: str, price: float):
         state = self.states[symbol]
@@ -487,7 +475,8 @@ class MultiScalper:
             return
 
         # スプレッドチェック
-        if not self.check_spread(symbol):
+        spread_ok, spread_pct = self.check_spread(symbol)
+        if not spread_ok:
             return
 
         width = state.upper - state.lower
@@ -497,29 +486,29 @@ class MultiScalper:
 
         if state.mode == "range":
             # === レンジモード: 逆張り ===
-            # BB下限30%以下でロング、上限70%以上でショート
+            # BB下限20%以下でロング、上限80%以上でショート（厳格化）
             range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos <= 0.30:
+            if range_pos <= 0.20:
                 side = "long"
-            elif range_pos >= 0.70:
+            elif range_pos >= 0.80:
                 side = "short"
 
         elif state.mode == "trend_up":
             # === 上昇トレンド: 順張りロング ===
-            # 1) 押し目買い: BB60%以下でロング
+            # 1) 押し目買い: BB50%以下でロング（厳格化）
             # 2) ブレイクアウト: BB上限突破でロング
             range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos <= 0.60:
+            if range_pos <= 0.50:
                 side = "long"
             elif range_pos >= 1.0:
                 side = "long"  # ブレイクアウト
 
         elif state.mode == "trend_down":
             # === 下降トレンド: 順張りショート ===
-            # 1) 戻り売り: BB40%以上でショート
+            # 1) 戻り売り: BB50%以上でショート（厳格化）
             # 2) ブレイクアウト: BB下限突破でショート
             range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos >= 0.40:
+            if range_pos >= 0.50:
                 side = "short"
             elif range_pos <= 0.0:
                 side = "short"  # ブレイクアウト
@@ -545,7 +534,7 @@ class MultiScalper:
 
         log(symbol,
             f"{mode_jp.get(state.mode, '?')} {side.upper()} @ {price:.6f} "
-            f"| TP:{tp_price:.6f} SL:{sl_price:.6f} | 数量:{qty} (倍率:{state.bet_multiplier:.1f}x)"
+            f"| TP:{tp_price:.6f}(+{tp_pct}%) SL:{sl_price:.6f}(-{sl_pct}%) | 数量:{qty}"
         )
 
         if not cfg.DRY_RUN:
@@ -612,37 +601,31 @@ class MultiScalper:
         qty_float = float(state.qty)
         # 手数料控除 (Bitget: テイカー0.06% × 往復 = 0.12%)
         fee_pct = 0.12 if EXCHANGE == 'bitget' else 0.0
-        net_pnl_pct = pnl_pct - fee_pct
+        # スプレッドコスト（エントリー+エグジットの2回分を概算）
+        _, spread_pct = self.check_spread(symbol)
+        spread_cost_pct = spread_pct  # 往復分のスプレッド
+        # 実質PnL = 生PnL - 手数料 - スプレッド
+        total_cost_pct = fee_pct + spread_cost_pct
+        net_pnl_pct = pnl_pct - total_cost_pct
         pnl_usd = state.entry_price * qty_float * (net_pnl_pct / 100)
         elapsed = time.time() - state.entry_time
-
-        # 固定ベット(1.0倍)だった場合のPnL計算（比較用）
-        base_qty_float = qty_float / state.bet_multiplier if state.bet_multiplier > 0 else qty_float
-        pnl_usd_fixed = state.entry_price * base_qty_float * (pnl_pct / 100)
-        state.pnl_usd_fixed += pnl_usd_fixed
 
         state.pnl_usd += pnl_usd
         if pnl_pct > 0:
             state.wins += 1
-            # 勝ち → 倍率 -0.5 (下限1.0)
-            state.bet_multiplier = max(1.0, state.bet_multiplier - 0.5)
         else:
             state.losses += 1
-            # 負け → 倍率 +0.1 (上限2.0、2.0で負けたら1.0リセット)
-            if state.bet_multiplier >= 2.0:
-                state.bet_multiplier = 1.0
-                log(symbol, "倍率2.0上限到達 → 1.0にリセット")
-            else:
-                state.bet_multiplier = min(2.0, state.bet_multiplier + 0.1)
 
         trade = {
             "time": datetime.now(timezone.utc).isoformat(),
             "symbol": symbol, "mode": state.mode,
             "side": state.position_side,
             "entry": state.entry_price, "exit": exit_price,
-            "pnl_pct": round(pnl_pct, 4), "pnl_usd": round(pnl_usd, 4),
-            "pnl_usd_fixed": round(pnl_usd_fixed, 4),
-            "bet_mult": round(state.bet_multiplier, 1),
+            "pnl_pct": round(pnl_pct, 4),
+            "fee_pct": round(fee_pct, 4),
+            "spread_pct": round(spread_cost_pct, 4),
+            "net_pnl_pct": round(net_pnl_pct, 4),
+            "pnl_usd": round(pnl_usd, 4),
             "reason": reason, "hold_sec": round(elapsed),
         }
         state.trade_history.append(trade)
@@ -660,8 +643,9 @@ class MultiScalper:
         mode_jp = {"range": "逆張", "trend_up": "順張↑", "trend_down": "順張↓"}
         log(symbol,
             f"{icon} {mode_jp.get(state.mode, '?')} {state.position_side.upper()} "
-            f"{state.entry_price:.6f}→{exit_price:.6f} | {pnl_pct:+.2f}% (${pnl_usd:+.2f}) "
-            f"| {elapsed:.0f}秒 | 累計:${state.pnl_usd:+.2f} | 次倍率:{state.bet_multiplier:.1f}x"
+            f"{state.entry_price:.6f}→{exit_price:.6f} | 生:{pnl_pct:+.2f}% 手数料:{fee_pct:.2f}% "
+            f"スプレ:{spread_cost_pct:.2f}% → 実質:{net_pnl_pct:+.2f}% (${pnl_usd:+.2f}) "
+            f"| {elapsed:.0f}秒 | 累計:${state.pnl_usd:+.2f}"
         )
 
         state.in_position = False
@@ -671,7 +655,6 @@ class MultiScalper:
     def print_dashboard(self):
         """全通貨のダッシュボード"""
         total_pnl = 0
-        total_pnl_fixed = 0
         total_trades = 0
         lines = []
         for sym, s in self.states.items():
@@ -682,20 +665,18 @@ class MultiScalper:
 
             wr = s.wins / max(s.wins + s.losses, 1) * 100
             total_pnl += s.pnl_usd
-            total_pnl_fixed += s.pnl_usd_fixed
             total_trades += s.wins + s.losses
             lines.append(
                 f"  {sym:12s} {mode_icon} BB幅:{s.bb_width_pct:>4.1f}% "
-                f"| {s.wins}W{s.losses}L {wr:>4.0f}% ${s.pnl_usd:>+6.2f} "
-                f"(固定:${s.pnl_usd_fixed:>+5.2f}) 倍率:{s.bet_multiplier:.1f}x{pos}"
+                f"| {s.wins}W{s.losses}L {wr:>4.0f}% ${s.pnl_usd:>+6.2f}{pos}"
             )
 
-        print(f"\r\n{'='*75}")
-        print(f"  ダッシュボード | PnL: ${total_pnl:+.2f} (固定:${total_pnl_fixed:+.2f}) | {total_trades}回")
-        print(f"{'='*75}")
+        print(f"\r\n{'='*70}")
+        print(f"  ダッシュボード | PnL: ${total_pnl:+.2f} (手数料+スプレッド込) | {total_trades}回")
+        print(f"{'='*70}")
         for line in lines:
             print(line)
-        print(f"{'='*75}")
+        print(f"{'='*70}")
 
     def run(self):
         rotate_label = "ON" if AUTO_ROTATE else "OFF"
