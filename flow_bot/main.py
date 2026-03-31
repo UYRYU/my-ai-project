@@ -7,6 +7,7 @@ from datetime import datetime
 import config
 from scanner import scan_all
 from classifier import classify, format_alert
+from logger import log_flows
 
 
 def print_banner():
@@ -40,6 +41,9 @@ def run_scan():
     for flow in flows:
         level = classify(flow)
         print(format_alert(flow, level))
+
+    # CSVに記録
+    log_flows(flows)
 
 
 def main():
