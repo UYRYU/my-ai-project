@@ -5,10 +5,12 @@
 自動判定で切り替え + 5通貨同時対応
 """
 
+import math
 import statistics
 import time
 import json
 import threading
+import requests
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +19,14 @@ from bybit_client import BybitClient
 import bybit_config as cfg
 
 
-# === 通貨別最適パラメータ ===
+# === 自動選定の設定 ===
+AUTO_ROTATE = getattr(cfg, 'AUTO_ROTATE', True)      # 自動ローテーションON/OFF
+ROTATE_INTERVAL = getattr(cfg, 'ROTATE_INTERVAL', 7200)  # スキャン間隔(秒) = 2時間
+MAX_COINS = getattr(cfg, 'MAX_COINS', 5)              # 同時運用数
+MIN_VOLUME_USDT = getattr(cfg, 'MIN_VOLUME_USDT', 500_000)  # 最低出来高
+
+
+# === 通貨別最適パラメータ (デフォルト値、自動選定時はこれを使う) ===
 COIN_PARAMS = {
     "SIRENUSDT": {"tp_range": 1.5, "sl_range": 0.3, "tp_trend": 2.0, "sl_trend": 0.5},
     "RDNTUSDT":  {"tp_range": 2.5, "sl_range": 1.0, "tp_trend": 2.5, "sl_trend": 0.8},
@@ -153,6 +162,101 @@ def calc_qty(price: float, available: float, state: CoinState, use_multiplier: b
     return f"{qty:.{decimals}f}"
 
 
+# === ボラティリティスキャナー ===
+def scan_volatile_coins(top_n: int = 10) -> list[dict]:
+    """Bybit先物からボラの高い通貨TOP Nを自動選定"""
+    try:
+        resp = requests.get(
+            "https://api.bybit.com/v5/market/tickers?category=linear",
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tickers = resp.json().get("result", {}).get("list", [])
+    except Exception as e:
+        log("SCANNER", f"ティッカー取得エラー: {e}")
+        return []
+
+    candidates = []
+    for t in tickers:
+        sym = t.get("symbol", "")
+        if not sym.endswith("USDT"):
+            continue
+        try:
+            high = float(t.get("highPrice24h", 0))
+            low = float(t.get("lowPrice24h", 0))
+            last = float(t.get("lastPrice", 0))
+            vol = float(t.get("turnover24h", 0))
+            if low <= 0 or last <= 0 or vol < MIN_VOLUME_USDT:
+                continue
+            vol_pct = ((high - low) / low) * 100
+            if vol_pct < 3:  # ボラ3%以下は除外
+                continue
+            candidates.append({
+                "symbol": sym, "price": last,
+                "vol_pct": vol_pct, "volume": vol,
+            })
+        except (ValueError, TypeError):
+            continue
+
+    if not candidates:
+        return []
+
+    # K線分析で上位候補を詳細チェック
+    # まずボラ×出来高で上位30に絞る
+    candidates.sort(key=lambda x: x["vol_pct"] * math.log10(max(x["volume"], 1)), reverse=True)
+    candidates = candidates[:30]
+
+    results = []
+    for c in candidates:
+        try:
+            resp = requests.get(
+                "https://api.bybit.com/v5/market/kline",
+                params={"category": "linear", "symbol": c["symbol"], "interval": "15", "limit": 96},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            klines_raw = resp.json().get("result", {}).get("list", [])
+            if len(klines_raw) < 20:
+                continue
+            closes = [float(k[4]) for k in reversed(klines_raw)]
+
+            # 中央クロス回数
+            median_price = statistics.median(closes)
+            cross_count = 0
+            above = closes[0] > median_price
+            for cl in closes[1:]:
+                now_above = cl > median_price
+                if now_above != above:
+                    cross_count += 1
+                    above = now_above
+
+            # BB幅
+            recent = closes[-20:]
+            mean = statistics.mean(recent)
+            std = statistics.stdev(recent) if len(recent) > 1 else 0
+            bb_width = (std * 4 / mean * 100) if mean > 0 else 0
+
+            # スコア: ボラ + 出来高 + BB幅 + クロス回数
+            vol_score = min(c["vol_pct"] / 20, 1.0)
+            vol_usd_score = min(math.log10(max(c["volume"], 1)) / 8, 1.0)
+            bb_score = min(bb_width / 10, 1.0)
+            cross_score = min(cross_count / 15, 1.0)
+
+            total = vol_score * 25 + vol_usd_score * 20 + bb_score * 30 + cross_score * 25
+
+            c["score"] = round(total, 1)
+            c["bb_width"] = round(bb_width, 1)
+            c["cross_count"] = cross_count
+            results.append(c)
+
+            time.sleep(0.2)
+        except Exception:
+            continue
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_n]
+
+
 # === 取引対象通貨 ===
 SYMBOLS = getattr(cfg, 'SYMBOLS', [cfg.SYMBOL])
 if isinstance(SYMBOLS, str):
@@ -207,6 +311,62 @@ class MultiScalper:
         except Exception as e:
             log(symbol, f"初期化エラー: {e}")
             return False
+
+    def rotate_coins(self):
+        """ボラの高い通貨を自動選定して入れ替え"""
+        log("SCANNER", "ボラティリティスキャン開始...")
+        top = scan_volatile_coins(top_n=MAX_COINS * 2)
+        if not top:
+            log("SCANNER", "スキャン結果なし、現状維持")
+            return
+
+        # 表示
+        log("SCANNER", f"TOP{len(top)}:")
+        for i, c in enumerate(top[:MAX_COINS * 2], 1):
+            log("SCANNER", f"  {i}. {c['symbol']} ボラ:{c['vol_pct']:.1f}% BB幅:{c['bb_width']}% "
+                f"往復:{c['cross_count']}回 出来高:{c['volume']/1e6:.1f}M スコア:{c['score']}")
+
+        new_symbols = [c["symbol"] for c in top[:MAX_COINS]]
+
+        # ポジション保有中のコインは残す
+        keep = set()
+        remove = set()
+        for sym, state in self.states.items():
+            if state.in_position:
+                keep.add(sym)
+            elif sym not in new_symbols:
+                remove.add(sym)
+            else:
+                keep.add(sym)
+
+        # シャドウポジション保有中も考慮
+        for sym, shadow in self.shadows.items():
+            if shadow.position.side:
+                keep.add(sym)
+                remove.discard(sym)
+
+        # 削除
+        for sym in remove:
+            log("SCANNER", f"除外: {sym}")
+            del self.states[sym]
+            if sym in self.shadows:
+                del self.shadows[sym]
+
+        # 新規追加 (MAX_COINSまで)
+        current = set(self.states.keys())
+        for c in top:
+            if len(current) >= MAX_COINS:
+                break
+            sym = c["symbol"]
+            if sym not in current:
+                if self.init_coin(sym):
+                    self.update_range(sym)
+                    current.add(sym)
+                    log("SCANNER", f"追加: {sym} (ボラ:{c['vol_pct']:.1f}% スコア:{c['score']})")
+                time.sleep(0.3)
+
+        active = list(self.states.keys())
+        log("SCANNER", f"現在の運用通貨: {', '.join(active)} ({len(active)}個)")
 
     def update_range(self, symbol: str):
         state = self.states[symbol]
@@ -567,16 +727,30 @@ class MultiScalper:
         print(f"{'='*75}")
 
     def run(self):
+        rotate_label = "ON" if AUTO_ROTATE else "OFF"
         print(f"{'='*65}")
         print(f"  マルチ通貨アダプティブスキャルパー")
         print(f"  モード: {'DRY RUN' if cfg.DRY_RUN else 'LIVE'}")
         print(f"  通貨: {', '.join(SYMBOLS)}")
         print(f"  レバレッジ: {cfg.LEVERAGE}x")
         print(f"  戦略: レンジ→逆張り / トレンド→順張り (自動切替)")
+        print(f"  自動銘柄選定: {rotate_label} ({ROTATE_INTERVAL//3600}h間隔)")
         print(f"{'='*65}")
 
-        # 初期化
-        for sym in SYMBOLS:
+        # 初期化: AUTO_ROTATEならスキャンして選定、そうでなければ設定通り
+        if AUTO_ROTATE:
+            log("SCANNER", "初回銘柄スキャン...")
+            top = scan_volatile_coins(top_n=MAX_COINS * 2)
+            if top:
+                init_symbols = [c["symbol"] for c in top[:MAX_COINS]]
+                log("SCANNER", f"自動選定: {', '.join(init_symbols)}")
+            else:
+                init_symbols = list(SYMBOLS)
+                log("SCANNER", f"スキャン失敗、デフォルト使用: {', '.join(init_symbols)}")
+        else:
+            init_symbols = list(SYMBOLS)
+
+        for sym in init_symbols:
             if not self.init_coin(sym):
                 print(f"  {sym} 初期化失敗、スキップ")
 
@@ -612,14 +786,20 @@ class MultiScalper:
         self.running = True
         last_range_update = time.time()
         last_dashboard = time.time()
+        last_rotate = time.time()
 
         try:
             while self.running:
                 now = time.time()
 
+                # 銘柄自動ローテーション
+                if AUTO_ROTATE and now - last_rotate > ROTATE_INTERVAL:
+                    self.rotate_coins()
+                    last_rotate = now
+
                 # レンジ定期更新
                 if now - last_range_update > cfg.RANGE_UPDATE_SEC:
-                    for sym in self.states:
+                    for sym in list(self.states.keys()):
                         self.update_range(sym)
                         time.sleep(0.2)
                     last_range_update = now
@@ -644,7 +824,8 @@ class MultiScalper:
                             self.check_entry(sym, price)
 
                         # パターンB仮想トレード
-                        self.shadow_check(sym, price)
+                        if sym in self.shadows:
+                            self.shadow_check(sym, price)
 
                     except Exception as e:
                         log(sym, f"エラー: {e}")
