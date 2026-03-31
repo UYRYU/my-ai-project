@@ -9,8 +9,19 @@ ALPACA_DATA_URL = "https://data.alpaca.markets"
 
 # 監視銘柄
 WATCHLIST = [
-    "SPY", "QQQ", "AAPL", "NVDA", "TSLA",
-    "MSFT", "META", "AMZN", "AMD", "COIN",
+    # 指数ETF
+    "SPY",   # S&P 500
+    "QQQ",   # NASDAQ 100
+    "IWM",   # Russell 2000
+    "DIA",   # Dow Jones
+    # コモディティETF
+    "USO",   # 原油
+    "GLD",   # 金
+    "SLV",   # 銀
+    # クリプトETF
+    "IBIT",  # BTC (BlackRock)
+    "BITO",  # BTC (ProShares)
+    "ETHA",  # ETH (BlackRock)
 ]
 
 # 検出条件
