@@ -261,21 +261,25 @@ class MultiScalper:
 
         if state.mode == "range":
             # === レンジモード: 逆張り ===
-            if price <= state.lower + offset:
+            # BB下限30%以下でロング、上限70%以上でショート
+            range_pos = (price - state.lower) / width if width > 0 else 0.5
+            if range_pos <= 0.30:
                 side = "long"
-            elif price >= state.upper - offset:
+            elif range_pos >= 0.70:
                 side = "short"
 
         elif state.mode == "trend_up":
             # === 上昇トレンド: 順張りロング ===
-            # BBの中央付近まで押したらロング
-            if price <= state.mid + offset:
+            # BB下半分(60%以下)まで押したらロング
+            range_pos = (price - state.lower) / width if width > 0 else 0.5
+            if range_pos <= 0.60:
                 side = "long"
 
         elif state.mode == "trend_down":
             # === 下降トレンド: 順張りショート ===
-            # BBの中央付近まで戻したらショート
-            if price >= state.mid - offset:
+            # BB上半分(40%以上)まで戻したらショート
+            range_pos = (price - state.lower) / width if width > 0 else 0.5
+            if range_pos >= 0.40:
                 side = "short"
 
         if side:
