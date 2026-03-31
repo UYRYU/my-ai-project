@@ -206,6 +206,9 @@ class BitgetClient:
         if not items:
             raise ValueError(f"銘柄情報取得失敗: {symbol}")
         info = items[0]
+        # pricePlaceは小数桁数(例: "4") → tick_sizeに変換(例: "0.0001")
+        price_place = int(info.get("pricePlace", 4))
+        tick_size = 1 / (10 ** price_place) if price_place > 0 else 1
         # Bybit互換形式
         return {
             "lotSizeFilter": {
@@ -213,6 +216,6 @@ class BitgetClient:
                 "qtyStep": info.get("sizeMultiplier", "1"),
             },
             "priceFilter": {
-                "tickSize": info.get("pricePlace", "0.0001"),
+                "tickSize": str(tick_size),
             },
         }
