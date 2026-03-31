@@ -312,6 +312,22 @@ class MultiScalper:
             log(symbol, f"初期化エラー: {e}")
             return False
 
+    def refresh_balance(self):
+        """残高を再取得して掛け金を自動調整"""
+        if cfg.DRY_RUN:
+            return
+        try:
+            bal = self.client.get_wallet_balance()
+            coins = bal.get("list", [{}])[0].get("coin", [])
+            usdt = next((c for c in coins if c.get("coin") == "USDT"), {})
+            new_balance = float(usdt.get("availableToWithdraw", self.available_balance))
+            old_balance = self.available_balance
+            self.available_balance = new_balance
+            diff = new_balance - old_balance
+            log("SYSTEM", f"残高更新: ${old_balance:.2f} → ${new_balance:.2f} (差額:${diff:+.2f})")
+        except Exception as e:
+            log("SYSTEM", f"残高取得エラー: {e}")
+
     def rotate_coins(self):
         """ボラの高い通貨を自動選定して入れ替え"""
         log("SCANNER", "ボラティリティスキャン開始...")
@@ -805,10 +821,17 @@ class MultiScalper:
         last_range_update = time.time()
         last_dashboard = time.time()
         last_rotate = time.time()
+        last_balance_refresh = time.time()
+        BALANCE_REFRESH_SEC = 86400  # 24時間
 
         try:
             while self.running:
                 now = time.time()
+
+                # 1日1回残高更新（掛け金自動調整）
+                if now - last_balance_refresh > BALANCE_REFRESH_SEC:
+                    self.refresh_balance()
+                    last_balance_refresh = now
 
                 # 銘柄自動ローテーション
                 if AUTO_ROTATE and now - last_rotate > ROTATE_INTERVAL:
