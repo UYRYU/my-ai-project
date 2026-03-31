@@ -21,7 +21,7 @@ import bybit_config as cfg
 
 # === 自動選定の設定 ===
 AUTO_ROTATE = getattr(cfg, 'AUTO_ROTATE', True)      # 自動ローテーションON/OFF
-ROTATE_INTERVAL = getattr(cfg, 'ROTATE_INTERVAL', 7200)  # スキャン間隔(秒) = 2時間
+ROTATE_INTERVAL = getattr(cfg, 'ROTATE_INTERVAL', 14400)  # スキャン間隔(秒) = 4時間
 MAX_COINS = getattr(cfg, 'MAX_COINS', 5)              # 同時運用数
 MIN_VOLUME_USDT = getattr(cfg, 'MIN_VOLUME_USDT', 500_000)  # 最低出来高
 
