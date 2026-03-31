@@ -46,11 +46,13 @@ class CoinState:
     wins: int = 0
     losses: int = 0
     pnl_usd: float = 0.0
+    pnl_usd_fixed: float = 0.0   # 比較用：固定ベットだった場合のPnL
     last_loss_time: float = 0.0
     daily_trades: int = 0
     min_qty: float = 1.0
     qty_step: float = 1.0
     tick_size: float = 0.0001
+    bet_multiplier: float = 1.0   # プログレッシブベット倍率
     trade_history: list = field(default_factory=list)
 
 
@@ -127,7 +129,7 @@ def round_price(price: float, tick_size: float) -> str:
     return f"{price:.{decimals}f}"
 
 
-def calc_qty(price: float, available: float, state: CoinState) -> str:
+def calc_qty(price: float, available: float, state: CoinState, use_multiplier: bool = True) -> str:
     if cfg.FIXED_QTY > 0:
         qty = cfg.FIXED_QTY
     else:
@@ -136,6 +138,10 @@ def calc_qty(price: float, available: float, state: CoinState) -> str:
         margin = available * (per_coin_pct / 100)
         position_value = margin * cfg.LEVERAGE
         qty = position_value / price
+
+    # プログレッシブベット: 倍率を適用
+    if use_multiplier:
+        qty *= state.bet_multiplier
 
     if state.qty_step > 0:
         qty = int(qty / state.qty_step) * state.qty_step
@@ -303,7 +309,7 @@ class MultiScalper:
 
         log(symbol,
             f"{mode_jp.get(state.mode, '?')} {side.upper()} @ {price:.6f} "
-            f"| TP:{tp_price:.6f} SL:{sl_price:.6f} | 数量:{qty}"
+            f"| TP:{tp_price:.6f} SL:{sl_price:.6f} | 数量:{qty} (倍率:{state.bet_multiplier:.1f}x)"
         )
 
         if not cfg.DRY_RUN:
@@ -371,11 +377,20 @@ class MultiScalper:
         pnl_usd = state.entry_price * qty_float * (pnl_pct / 100)
         elapsed = time.time() - state.entry_time
 
+        # 固定ベット(1.0倍)だった場合のPnL計算（比較用）
+        base_qty_float = qty_float / state.bet_multiplier if state.bet_multiplier > 0 else qty_float
+        pnl_usd_fixed = state.entry_price * base_qty_float * (pnl_pct / 100)
+        state.pnl_usd_fixed += pnl_usd_fixed
+
         state.pnl_usd += pnl_usd
         if pnl_pct > 0:
             state.wins += 1
+            # 勝ち → 倍率 -0.5 (下限1.0)
+            state.bet_multiplier = max(1.0, state.bet_multiplier - 0.5)
         else:
             state.losses += 1
+            # 負け → 倍率 +0.1
+            state.bet_multiplier += 0.1
 
         trade = {
             "time": datetime.now(timezone.utc).isoformat(),
@@ -383,6 +398,8 @@ class MultiScalper:
             "side": state.position_side,
             "entry": state.entry_price, "exit": exit_price,
             "pnl_pct": round(pnl_pct, 4), "pnl_usd": round(pnl_usd, 4),
+            "pnl_usd_fixed": round(pnl_usd_fixed, 4),
+            "bet_mult": round(state.bet_multiplier, 1),
             "reason": reason, "hold_sec": round(elapsed),
         }
         state.trade_history.append(trade)
@@ -401,7 +418,7 @@ class MultiScalper:
         log(symbol,
             f"{icon} {mode_jp.get(state.mode, '?')} {state.position_side.upper()} "
             f"{state.entry_price:.6f}→{exit_price:.6f} | {pnl_pct:+.2f}% (${pnl_usd:+.2f}) "
-            f"| {elapsed:.0f}秒 | 累計:${state.pnl_usd:+.2f}"
+            f"| {elapsed:.0f}秒 | 累計:${state.pnl_usd:+.2f} | 次倍率:{state.bet_multiplier:.1f}x"
         )
 
         state.in_position = False
@@ -411,32 +428,33 @@ class MultiScalper:
     def print_dashboard(self):
         """全通貨のダッシュボード"""
         total_pnl = 0
+        total_pnl_fixed = 0
         total_trades = 0
         lines = []
         for sym, s in self.states.items():
             mode_icon = {"range": "⇄", "trend_up": "↑", "trend_down": "↓"}.get(s.mode, "?")
             pos = ""
             if s.in_position:
-                if s.position_side == "long":
-                    ur = (s.mid - s.entry_price) / s.entry_price * 100  # approximate
-                else:
-                    ur = (s.entry_price - s.mid) / s.entry_price * 100
                 pos = f" {s.position_side[0].upper()}@{s.entry_price:.4f}"
 
             wr = s.wins / max(s.wins + s.losses, 1) * 100
             total_pnl += s.pnl_usd
+            total_pnl_fixed += s.pnl_usd_fixed
             total_trades += s.wins + s.losses
             lines.append(
                 f"  {sym:12s} {mode_icon} BB幅:{s.bb_width_pct:>4.1f}% "
-                f"| {s.wins}W{s.losses}L {wr:>4.0f}% ${s.pnl_usd:>+6.2f}{pos}"
+                f"| {s.wins}W{s.losses}L {wr:>4.0f}% ${s.pnl_usd:>+6.2f} "
+                f"(固定:${s.pnl_usd_fixed:>+5.2f}) 倍率:{s.bet_multiplier:.1f}x{pos}"
             )
 
-        print(f"\r\n{'='*65}")
-        print(f"  ダッシュボード | 合計PnL: ${total_pnl:+.2f} | 取引: {total_trades}回")
-        print(f"{'='*65}")
+        diff = total_pnl - total_pnl_fixed
+        diff_label = f"差額:${diff:+.2f}" if total_trades > 0 else ""
+        print(f"\r\n{'='*75}")
+        print(f"  ダッシュボード | プログレ: ${total_pnl:+.2f} | 固定: ${total_pnl_fixed:+.2f} | {diff_label} | {total_trades}回")
+        print(f"{'='*75}")
         for line in lines:
             print(line)
-        print(f"{'='*65}")
+        print(f"{'='*75}")
 
     def run(self):
         print(f"{'='*65}")
