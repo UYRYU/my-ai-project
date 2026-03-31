@@ -173,15 +173,19 @@ class BitgetClient:
             "marginMode": "crossed",
             "marginCoin": "USDT",
             "side": bg_side,
+            "tradeSide": "open",
             "orderType": order_type.lower(),
             "size": qty,
             "force": "gtc" if order_type.lower() == "limit" else "ioc",
         }
+        if reduce_only:
+            data["tradeSide"] = "close"
         if price:
             data["price"] = price
-        if take_profit:
+        # TP/SLは値が"0"や空でないか確認
+        if take_profit and float(take_profit) > 0:
             data["presetStopSurplusPrice"] = take_profit
-        if stop_loss:
+        if stop_loss and float(stop_loss) > 0:
             data["presetStopLossPrice"] = stop_loss
 
         return self._post("/api/v2/mix/order/place-order", data)

@@ -138,7 +138,9 @@ def calc_bb(closes: list[float], period: int = 20, std_mult: float = 2.0) -> tup
 def round_price(price: float, tick_size: float) -> str:
     if tick_size > 0:
         price = round(price / tick_size) * tick_size
-    decimals = len(str(tick_size).rstrip('0').split('.')[-1]) if '.' in str(tick_size) else 0
+    # 科学表記(1e-05等)に対応
+    ts = f"{tick_size:.15f}".rstrip('0')
+    decimals = len(ts.split('.')[-1]) if '.' in ts else 0
     return f"{price:.{decimals}f}"
 
 
@@ -156,9 +158,15 @@ def calc_qty(price: float, available: float, state: CoinState, use_multiplier: b
     if use_multiplier:
         qty *= state.bet_multiplier
 
+    # Bitget最低5USDT保証
+    min_notional = 5.0 if EXCHANGE == 'bitget' else 0
+    min_qty_by_notional = (min_notional / price) if price > 0 and min_notional > 0 else 0
+
     if state.qty_step > 0:
         qty = int(qty / state.qty_step) * state.qty_step
-    qty = max(qty, state.min_qty)
+    qty = max(qty, state.min_qty, min_qty_by_notional)
+    if state.qty_step > 0:
+        qty = max(int(qty / state.qty_step), 1) * state.qty_step
 
     if state.qty_step >= 1:
         return str(int(qty))
