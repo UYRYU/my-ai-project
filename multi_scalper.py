@@ -1,8 +1,7 @@
-"""Bybit マルチ通貨 アダプティブスキャルパー
+"""マルチ通貨 レンジ反発スキャルパー
 
-レンジ相場 → 逆張り (BBバウンス)
-トレンド相場 → 順張り (BBブレイクアウト)
-自動判定で切り替え + 5通貨同時対応
+BB端 + RSI過売買 + ローソク足反転 の3条件一致でエントリー
+意識されるサポレジでの反発を高勝率で拾う戦略
 """
 
 import math
@@ -59,6 +58,8 @@ class CoinState:
     min_qty: float = 1.0
     qty_step: float = 1.0
     tick_size: float = 0.0001
+    rsi: float = 50.0              # RSI値
+    recent_closes: list = field(default_factory=list)  # 直近のclose価格（反転判定用）
     trade_history: list = field(default_factory=list)
 
 
@@ -126,6 +127,36 @@ def calc_bb(closes: list[float], period: int = 20, std_mult: float = 2.0) -> tup
     upper = mean + std_mult * std
     lower = mean - std_mult * std
     return upper, lower, mean
+
+
+def calc_rsi(closes: list[float], period: int = 14) -> float:
+    """RSI計算 (0-100)"""
+    if len(closes) < period + 1:
+        return 50.0
+    deltas = [closes[i] - closes[i-1] for i in range(-period, 0)]
+    gains = [d for d in deltas if d > 0]
+    losses = [-d for d in deltas if d < 0]
+    avg_gain = sum(gains) / period if gains else 0
+    avg_loss = sum(losses) / period if losses else 0
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def is_reversal_candle(closes: list[float], side: str) -> bool:
+    """直近のローソク足が反転しているか確認
+    side="long": 下落後に陽線（前の足が陰線、最新が陽線）
+    side="short": 上昇後に陰線（前の足が陽線、最新が陰線）
+    """
+    if len(closes) < 3:
+        return False
+    prev_move = closes[-2] - closes[-3]  # 一つ前の足の方向
+    curr_move = closes[-1] - closes[-2]  # 最新の足の方向
+    if side == "long":
+        return prev_move < 0 and curr_move > 0  # 下落→反転上昇
+    else:
+        return prev_move > 0 and curr_move < 0  # 上昇→反転下落
 
 
 def round_price(price: float, tick_size: float) -> str:
@@ -414,6 +445,7 @@ class MultiScalper:
             upper, lower, mid = calc_bb(closes, bb_period, bb_std)
             trend_score, mode = calc_trend_score(closes, bb_period)
             bb_width = (upper - lower) / mid * 100 if mid > 0 else 0
+            rsi = calc_rsi(closes)
 
             old_mode = state.mode
             state.upper = upper
@@ -422,13 +454,16 @@ class MultiScalper:
             state.bb_width_pct = bb_width
             state.trend_score = trend_score
             state.mode = mode
+            state.rsi = rsi
+            state.recent_closes = closes[-5:]  # 直近5本保存（反転判定用）
 
             mode_jp = {"range": "レンジ", "trend_up": "上昇トレンド", "trend_down": "下降トレンド"}
             mode_changed = f" ← 切替!" if old_mode != mode and old_mode != "unknown" else ""
+            range_ok = "○" if mode == "range" else "×スキップ"
 
             log(symbol,
-                f"BB:{lower:.6f}-{upper:.6f} (幅:{bb_width:.1f}%) | "
-                f"モード:{mode_jp.get(mode, mode)} (スコア:{trend_score:+.2f}){mode_changed}"
+                f"BB:{lower:.6f}-{upper:.6f} (幅:{bb_width:.1f}%) RSI:{rsi:.0f} | "
+                f"{mode_jp.get(mode, mode)}({trend_score:+.2f}) → {range_ok}"
             )
 
         except Exception as e:
@@ -468,6 +503,14 @@ class MultiScalper:
         if state.in_position or state.upper == 0 or state.lower == 0:
             return
 
+        # レンジモードのみエントリー（トレンド中はスキップ）
+        if state.mode != "range":
+            return
+
+        # 強トレンド中はレンジ判定でも危険なのでスキップ
+        if abs(state.trend_score) > 0.25:
+            return
+
         # リスク管理
         if state.daily_trades >= cfg.MAX_DAILY_TRADES:
             return
@@ -480,41 +523,36 @@ class MultiScalper:
             return
 
         width = state.upper - state.lower
-        offset = width * (cfg.ENTRY_OFFSET_PCT / 100)
+        if width <= 0:
+            return
 
+        range_pos = (price - state.lower) / width
         side = None
+        reason = ""
 
-        if state.mode == "range":
-            # === レンジモード: 逆張り ===
-            # BB下限20%以下でロング、上限80%以上でショート（厳格化）
-            range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos <= 0.20:
-                side = "long"
-            elif range_pos >= 0.80:
-                side = "short"
+        # === 条件1: BB端に到達（20%/80%） ===
+        if range_pos <= 0.20:
+            side = "long"
+        elif range_pos >= 0.80:
+            side = "short"
 
-        elif state.mode == "trend_up":
-            # === 上昇トレンド: 順張りロング ===
-            # 1) 押し目買い: BB50%以下でロング（厳格化）
-            # 2) ブレイクアウト: BB上限突破でロング
-            range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos <= 0.50:
-                side = "long"
-            elif range_pos >= 1.0:
-                side = "long"  # ブレイクアウト
+        if not side:
+            return
 
-        elif state.mode == "trend_down":
-            # === 下降トレンド: 順張りショート ===
-            # 1) 戻り売り: BB50%以上でショート（厳格化）
-            # 2) ブレイクアウト: BB下限突破でショート
-            range_pos = (price - state.lower) / width if width > 0 else 0.5
-            if range_pos >= 0.50:
-                side = "short"
-            elif range_pos <= 0.0:
-                side = "short"  # ブレイクアウト
+        # === 条件2: RSI確認（過売買ゾーン） ===
+        if side == "long" and state.rsi > 35:
+            return  # RSIがまだ過売じゃない
+        if side == "short" and state.rsi < 65:
+            return  # RSIがまだ過買じゃない
 
-        if side:
-            self.open_position(symbol, side, price)
+        # === 条件3: ローソク足反転確認 ===
+        closes_with_current = state.recent_closes + [price]
+        if not is_reversal_candle(closes_with_current, side):
+            return  # まだ反転してない
+
+        reason = f"BB:{range_pos:.0%} RSI:{state.rsi:.0f} 反転確認OK"
+        log(symbol, f"エントリー条件成立: {side.upper()} {reason}")
+        self.open_position(symbol, side, price)
 
     def open_position(self, symbol: str, side: str, price: float):
         state = self.states[symbol]
@@ -667,7 +705,7 @@ class MultiScalper:
             total_pnl += s.pnl_usd
             total_trades += s.wins + s.losses
             lines.append(
-                f"  {sym:12s} {mode_icon} BB幅:{s.bb_width_pct:>4.1f}% "
+                f"  {sym:12s} {mode_icon} BB幅:{s.bb_width_pct:>4.1f}% RSI:{s.rsi:>3.0f} "
                 f"| {s.wins}W{s.losses}L {wr:>4.0f}% ${s.pnl_usd:>+6.2f}{pos}"
             )
 
@@ -687,7 +725,7 @@ class MultiScalper:
         print(f"  モード: {'DRY RUN' if cfg.DRY_RUN else '🔴 LIVE'}")
         print(f"  通貨: {', '.join(SYMBOLS)}")
         print(f"  レバレッジ: {cfg.LEVERAGE}x")
-        print(f"  戦略: レンジ→逆張り / トレンド→順張り+ブレイクアウト")
+        print(f"  戦略: レンジ反発のみ (BB端+RSI+ローソク反転の3条件)")
         print(f"  自動銘柄選定: {rotate_label} ({ROTATE_INTERVAL//3600}h間隔)")
         print(f"{'='*65}")
 
