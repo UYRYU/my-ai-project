@@ -30,12 +30,38 @@ from btc_trend_bot.strategies.trend_long.reacceleration_strategy import Reaccele
 from btc_trend_bot.strategies.trend_long.multi_tf_strategy import MultiTFStrategy
 
 
-STRATEGY_MAP = {
-    "pullback": PullbackStrategy,
-    "breakout": BreakoutStrategy,
-    "reacceleration": ReaccelerationStrategy,
-    "multi_tf": MultiTFStrategy,
-}
+def _build_strategy_map() -> dict:
+    """Build strategy map including strict variants if available."""
+    strategy_map = {
+        "pullback": PullbackStrategy,
+        "breakout": BreakoutStrategy,
+        "reacceleration": ReaccelerationStrategy,
+        "multi_tf": MultiTFStrategy,
+    }
+    try:
+        from btc_trend_bot.strategies.trend_long.pullback_strict import PullbackStrictStrategy
+        strategy_map["pullback_strict"] = PullbackStrictStrategy
+    except ImportError:
+        pass
+    try:
+        from btc_trend_bot.strategies.trend_long.breakout_confirmed import BreakoutConfirmedStrategy
+        strategy_map["breakout_confirmed"] = BreakoutConfirmedStrategy
+    except ImportError:
+        pass
+    try:
+        from btc_trend_bot.strategies.trend_long.reacceleration_quality import ReaccelerationQualityStrategy
+        strategy_map["reacceleration_quality"] = ReaccelerationQualityStrategy
+    except ImportError:
+        pass
+    try:
+        from btc_trend_bot.strategies.trend_long.multi_tf_trend_hold import MultiTFTrendHoldStrategy
+        strategy_map["multi_tf_trend_hold"] = MultiTFTrendHoldStrategy
+    except ImportError:
+        pass
+    return strategy_map
+
+
+STRATEGY_MAP = _build_strategy_map()
 
 
 def load_config(config_path: str = "config/settings.yaml") -> dict:
