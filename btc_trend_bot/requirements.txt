@@ -1,0 +1,36 @@
+# BTC Trend Long Bot - Requirements
+# Python 3.11+
+
+# Data & Computation
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Technical Indicators
+ta>=0.10.2
+pandas-ta>=0.3.14b
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.14.0
+seaborn>=0.12.0
+
+# Optimization
+optuna>=3.2.0
+
+# Configuration
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Logging
+loguru>=0.7.0
+
+# Progress
+tqdm>=4.65.0
+
+# Testing
+pytest>=7.3.0
+
+# Future live trading (optional)
+# ccxt>=4.0.0
+# websockets>=11.0
