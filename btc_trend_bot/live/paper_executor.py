@@ -79,11 +79,31 @@ class PaperExecutor:
             warmup,
         )
 
+        # Pre-compute features once if indicators not present
+        has_features = "trend_regime" in df.columns and "rsi" in df.columns
+        if not has_features:
+            logger.info("Pre-computing features for historical simulation...")
+            df = self.signal_engine.fe.add_all_features(df)
+
+        # Pre-generate ALL signals at once (much faster than per-bar)
+        logger.info("Pre-generating signals from all strategies...")
+        all_signals: dict[pd.Timestamp, list] = {}
+        for strategy in self.signal_engine.strategies:
+            try:
+                sigs = strategy.generate_signals(df)
+                for sig in sigs:
+                    ts = sig.timestamp
+                    if ts not in all_signals:
+                        all_signals[ts] = []
+                    all_signals[ts].append(sig)
+            except Exception as e:
+                logger.error("Strategy {} failed: {}", strategy.name, e)
+        logger.info("Pre-generated signals at {} unique timestamps", len(all_signals))
+
         for i in range(warmup, len(df)):
-            # Sliding window: up to 500 bars of look-back plus the current bar
-            window = df.iloc[max(0, i - 500) : i + 1].copy()
             current_bar = df.iloc[i]
             current_price = float(current_bar["close"])
+            current_time = df.index[i]
 
             # --- Check exits for open positions ---
             closed = self.position_manager.update_price(current_price)
@@ -94,7 +114,7 @@ class PaperExecutor:
 
             # --- Check for new signals if no position is open ---
             if not self.position_manager.has_open_position(self.symbol):
-                signals = self.signal_engine.process_bar(window)
+                signals = all_signals.get(current_time, [])
 
                 for signal in signals:
                     allowed, reason = self.risk_manager.check_trade_allowed(

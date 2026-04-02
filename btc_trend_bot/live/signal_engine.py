@@ -82,7 +82,7 @@ class SignalEngine:
     # Signal generation
     # ------------------------------------------------------------------
 
-    def process_bar(self, df: pd.DataFrame) -> list[Signal]:
+    def process_bar(self, df: pd.DataFrame, precomputed: bool = False) -> list[Signal]:
         """Process a DataFrame of OHLCV bars and return signals for the latest bar.
 
         Parameters
@@ -92,6 +92,8 @@ class SignalEngine:
             DatetimeIndex.  The engine adds all technical features, then
             asks each strategy for signals.  Only signals whose timestamp
             matches the **last** bar are returned.
+        precomputed : bool
+            If True, skip feature engineering (df already has indicators).
 
         Returns
         -------
@@ -107,7 +109,7 @@ class SignalEngine:
             )
             return []
 
-        df_featured = self.fe.add_all_features(df)
+        df_featured = df if precomputed else self.fe.add_all_features(df)
         latest_time = df_featured.index[-1]
 
         all_signals: list[Signal] = []

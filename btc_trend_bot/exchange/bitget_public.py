@@ -258,7 +258,7 @@ class BitgetPublicClient(BaseExchange):
                     pd.Timestamp(new_start_ms, unit="ms", tz="UTC")
                 )
 
-                if pd.Timestamp(effective_start) > pd.Timestamp(end_date):
+                if pd.Timestamp(effective_start) > pd.Timestamp(end_date, tz="UTC"):
                     logger.info("Data already up to date, nothing to fetch")
                     return str(filepath.resolve())
 
