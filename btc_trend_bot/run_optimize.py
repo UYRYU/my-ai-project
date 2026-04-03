@@ -180,7 +180,7 @@ def main():
             "profit_factor": metrics.get("profit_factor", 0),
             "win_rate": metrics.get("win_rate", 0),
             "total_profit": metrics.get("total_profit", 0),
-            "max_dd_pct": metrics.get("max_dd_pct", 0),
+            "max_dd_pct": metrics.get("max_drawdown_pct", 0),
             "best_params": str(r.get("best_params", {})),
         })
 

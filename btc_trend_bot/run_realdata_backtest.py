@@ -319,7 +319,7 @@ def main():
             "profit_factor": m.get("profit_factor", 0),
             "calmar_ratio": m.get("calmar_ratio", 0),
             "win_rate": m.get("win_rate", 0),
-            "max_dd_pct": m.get("max_dd_pct", 0),
+            "max_dd_pct": m.get("max_drawdown_pct", 0),
             "expectancy": m.get("expectancy", 0),
             "avg_rr": m.get("avg_win_loss_ratio", 0),
             "high_tp_rate": m.get("high_tp_rate", 0),
@@ -433,7 +433,7 @@ def _write_best_strategy_md(
 | Profit Factor | {m.get('profit_factor', 0):.2f} |
 | 勝率 | {m.get('win_rate', 0)*100:.1f}% |
 | 総利益 | {m.get('total_profit', 0):.2f} USDT |
-| 最大DD | {m.get('max_dd_pct', 0)*100:.1f}% |
+| 最大DD | {m.get('max_drawdown_pct', 0)*100:.1f}% |
 | Expectancy | {m.get('expectancy', 0):.2f} |
 | 高TP達成率 (RR>3) | {m.get('high_tp_rate', 0)*100:.1f}% |
 | 総トレード数 | {len(trades)} |
@@ -493,7 +493,7 @@ def _write_best_strategy_md(
 ## 実運用時の注意点
 
 - Bitgetのtaker手数料 (0.06%) とスリッページ (5bps) を考慮済み
-- 最大DD {m.get('max_dd_pct', 0)*100:.1f}% を許容できるか確認
+- 最大DD {m.get('max_drawdown_pct', 0)*100:.1f}% を許容できるか確認
 - リスク管理: 1トレードあたり資金の2%以内
 - 回線障害・API障害時のフォールバック計画が必要
 - 深夜帯（日本時間）はスプレッドが広がる可能性あり

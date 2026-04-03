@@ -284,7 +284,7 @@ def main():
             f"PF={m.get('profit_factor', 0):.2f} | "
             f"WR={m.get('win_rate', 0)*100:.1f}% | "
             f"Calmar={m.get('calmar_ratio', 0):.2f} | "
-            f"MaxDD={m.get('max_dd_pct', 0)*100:.1f}%"
+            f"MaxDD={m.get('max_drawdown_pct', 0)*100:.1f}%"
         )
 
     # Also run bull-only comparison
