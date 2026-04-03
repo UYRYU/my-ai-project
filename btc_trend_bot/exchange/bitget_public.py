@@ -195,9 +195,9 @@ class BitgetPublicClient(BaseExchange):
         combined = combined[~combined.index.duplicated(keep="first")]
         combined.sort_index(inplace=True)
 
-        # Trim to requested range
-        mask = (combined.index >= pd.Timestamp(start_date)) & (
-            combined.index <= pd.Timestamp(end_date)
+        # Trim to requested range (ensure tz-aware comparison)
+        mask = (combined.index >= pd.Timestamp(start_date, tz="UTC")) & (
+            combined.index <= pd.Timestamp(end_date, tz="UTC")
         )
         combined = combined.loc[mask]
 
@@ -258,7 +258,7 @@ class BitgetPublicClient(BaseExchange):
                     pd.Timestamp(new_start_ms, unit="ms", tz="UTC")
                 )
 
-                if pd.Timestamp(effective_start) > pd.Timestamp(end_date, tz="UTC"):
+                if pd.Timestamp(effective_start, tz="UTC") > pd.Timestamp(end_date, tz="UTC"):
                     logger.info("Data already up to date, nothing to fetch")
                     return str(filepath.resolve())
 
