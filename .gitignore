@@ -1,3 +1,6 @@
 # Generated output
 logs/
 reports/
+
+# Secrets
+.env

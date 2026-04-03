@@ -10,10 +10,24 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from loguru import logger
+
+
+def _load_env():
+    """Load .env file from project root if it exists."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    os.environ.setdefault(key.strip(), value.strip())
+        logger.info("Loaded .env from {}", env_path)
 
 
 def main():
@@ -39,6 +53,9 @@ def main():
     logger.add("logs/fetch_data.log", rotation="10 MB", level="DEBUG")
     Path("logs").mkdir(exist_ok=True)
 
+    # Load .env before imports that might need env vars
+    _load_env()
+
     from btc_trend_bot.exchange.bitget_public import BitgetPublicClient
     from btc_trend_bot.exchange.models import ExchangeConfig
 
@@ -52,8 +69,13 @@ def main():
     if output_dir is None:
         output_dir = str(Path(__file__).parent / "data" / "raw")
 
-    # Create client
-    client = BitgetPublicClient(ExchangeConfig())
+    # Create client with env vars
+    config = ExchangeConfig(
+        api_key=os.environ.get("BITGET_API_KEY", ""),
+        api_secret=os.environ.get("BITGET_API_SECRET", ""),
+        passphrase=os.environ.get("BITGET_PASSPHRASE", ""),
+    )
+    client = BitgetPublicClient(config)
 
     timeframes = ["5m", "15m", "1h", "4h"] if args.all_timeframes else [args.timeframe]
 
