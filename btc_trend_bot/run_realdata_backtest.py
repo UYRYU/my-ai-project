@@ -13,12 +13,15 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 import yaml
 from loguru import logger
+
+from btc_trend_bot.env_loader import load_env
 
 from btc_trend_bot.data_loader import DataLoader
 from btc_trend_bot.feature_engineering import FeatureEngineer
@@ -200,6 +203,7 @@ def build_strategy_exit_matrix(all_results: list[dict]) -> pd.DataFrame:
 
 
 def main():
+    load_env()
     parser = argparse.ArgumentParser(description="Real Data Backtest Runner")
     parser.add_argument("--data", type=str, default=None, help="CSV file path")
     parser.add_argument("--fetch", action="store_true",
@@ -231,7 +235,11 @@ def main():
         logger.info("Fetching data from Bitget...")
         from btc_trend_bot.exchange.bitget_public import BitgetPublicClient
         from btc_trend_bot.exchange.models import ExchangeConfig
-        client = BitgetPublicClient(ExchangeConfig())
+        client = BitgetPublicClient(ExchangeConfig(
+            api_key=os.environ.get("BITGET_API_KEY", ""),
+            api_secret=os.environ.get("BITGET_API_SECRET", ""),
+            passphrase=os.environ.get("BITGET_PASSPHRASE", ""),
+        ))
         end_date = args.end or str(pd.Timestamp.now(tz="UTC").date())
         output_dir = str(Path(__file__).parent / "data" / "raw")
         data_path = client.download_and_save("BTCUSDT", "1h", args.start, end_date, output_dir)

@@ -16,21 +16,11 @@ from pathlib import Path
 
 from loguru import logger
 
-
-def _load_env():
-    """Load .env file from project root if it exists."""
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
-        logger.info("Loaded .env from {}", env_path)
+from btc_trend_bot.env_loader import load_env
 
 
 def main():
+    load_env()
     parser = argparse.ArgumentParser(description="Fetch BTCUSDT data from Bitget")
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="Trading pair")
     parser.add_argument("--timeframe", type=str, default="1h",
@@ -54,7 +44,6 @@ def main():
     Path("logs").mkdir(exist_ok=True)
 
     # Load .env before imports that might need env vars
-    _load_env()
 
     from btc_trend_bot.exchange.bitget_public import BitgetPublicClient
     from btc_trend_bot.exchange.models import ExchangeConfig

@@ -11,11 +11,14 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import yaml
 from loguru import logger
+
+from btc_trend_bot.env_loader import load_env
 
 
 def load_config(config_path: str | None = None) -> dict:
@@ -166,6 +169,7 @@ def main():
                         help="Config file path")
     args = parser.parse_args()
 
+    load_env()
     setup_logging()
     logger.info("=" * 60)
     logger.info("BTC Trend Long Bot - Starting")

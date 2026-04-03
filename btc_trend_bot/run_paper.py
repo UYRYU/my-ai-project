@@ -15,12 +15,15 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 import yaml
 from loguru import logger
+
+from btc_trend_bot.env_loader import load_env
 
 
 def load_config(config_path: str | None = None) -> dict:
@@ -115,6 +118,7 @@ def run_live(config: dict, interval: int):
 
 
 def main():
+    load_env()
     parser = argparse.ArgumentParser(description="Paper Trading Runner")
     parser.add_argument("--mode", type=str, default="historical",
                         choices=["historical", "live"],

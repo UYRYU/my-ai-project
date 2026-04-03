@@ -7,6 +7,8 @@ that a transient API failure does not crash the paper-trading loop.
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 from loguru import logger
 
@@ -19,10 +21,18 @@ class BitgetFeed:
 
     def __init__(self, config: dict | None = None) -> None:
         cfg = config or {}
-        exchange_config = ExchangeConfig(**{
+        init_kwargs = {
             k: v for k, v in cfg.items()
             if k in ExchangeConfig.__dataclass_fields__
-        })
+        }
+        # Override with env vars if available
+        if os.environ.get("BITGET_API_KEY"):
+            init_kwargs.setdefault("api_key", os.environ["BITGET_API_KEY"])
+        if os.environ.get("BITGET_API_SECRET"):
+            init_kwargs.setdefault("api_secret", os.environ["BITGET_API_SECRET"])
+        if os.environ.get("BITGET_PASSPHRASE"):
+            init_kwargs.setdefault("passphrase", os.environ["BITGET_PASSPHRASE"])
+        exchange_config = ExchangeConfig(**init_kwargs)
         self.client = BitgetPublicClient(exchange_config)
         self.symbol: str = cfg.get("symbol", "BTCUSDT")
         self.cache: dict[str, pd.DataFrame] = {}  # timeframe -> last fetched df
