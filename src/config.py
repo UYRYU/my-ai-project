@@ -65,6 +65,18 @@ class Config:
         logger.info("ウォレット %d 件を読み込みました", len(self.wallets))
 
     def setup_logging(self) -> None:
+        import sys
+
+        # Windows cmd.exe での文字化け対策
+        if sys.platform == "win32" and sys.stdout.encoding != "utf-8":
+            import io
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer, encoding="utf-8", errors="replace"
+            )
+            sys.stderr = io.TextIOWrapper(
+                sys.stderr.buffer, encoding="utf-8", errors="replace"
+            )
+
         logging.basicConfig(
             level=getattr(logging, self.log_level.upper(), logging.INFO),
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

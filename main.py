@@ -148,6 +148,10 @@ class WalletTracker:
 
 
 def main() -> None:
+    # Windows: SelectorEventLoopPolicy を使用（aiosqlite互換性のため）
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     config = Config.from_env()
     config.setup_logging()
     config.load_wallets()

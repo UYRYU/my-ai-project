@@ -1,7 +1,6 @@
 """SQLiteデータベース管理モジュール。"""
 
 import logging
-from datetime import datetime
 
 import aiosqlite
 
