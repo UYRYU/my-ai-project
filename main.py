@@ -7,7 +7,7 @@ import sys
 
 from src.collector import MockCollector, PolymarketCollector
 from src.config import Config
-from src.execution import Executor, LiveBroker, PaperBroker, RiskManager, TradingMode
+from src.execution import CsvWriter, Executor, LiveBroker, PaperBroker, RiskManager, TradingMode
 from src.notifier import DiscordNotifier
 from src.processor import SignalDetector, normalize_trades
 from src.storage import Database
@@ -57,11 +57,14 @@ class WalletTracker:
                 api_passphrase=config.poly_api_passphrase,
             )
 
+        csv_writer = CsvWriter("paper_trades.csv") if trading_mode == TradingMode.PAPER else None
+
         self.executor = Executor(
             mode=trading_mode,
             risk_manager=risk_manager,
             paper_broker=paper_broker,
             live_broker=live_broker,
+            csv_writer=csv_writer,
             allow_live=config.allow_live_trading,
             order_amount_usd=config.max_order_usd,
         )
@@ -205,6 +208,13 @@ class WalletTracker:
                         await self.db.insert_fill(fill)
                     except Exception as e:
                         logger.error("約定のDB保存に失敗: %s", e)
+
+                # PaperTrade を保存
+                for pt in self.executor.get_recent_paper_trades(limit=len(orders)):
+                    try:
+                        await self.db.insert_paper_trade(pt)
+                    except Exception as e:
+                        logger.error("PaperTradeのDB保存に失敗: %s", e)
 
                 # Execution ステータス表示
                 self.ui.show_execution_status(self.executor.stats)

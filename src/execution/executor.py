@@ -4,7 +4,7 @@
 1. Signal を受信
 2. RiskManager で発注可否を判定
 3. dry-run → ログ出力のみ
-4. paper → PaperBroker で仮想約定
+4. paper → PaperBroker で仮想約定 → exit シミュレーション → CSV/DB保存
 5. live → LiveBroker で実注文
 6. 結果を DB に保存
 """
@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 
 from src.processor.signal_detector import Signal
 
+from .csv_writer import CsvWriter
 from .live_broker import LiveBroker
-from .models import Fill, Order, OrderStatus, PnLRecord, TradingMode
+from .models import Fill, Order, OrderStatus, PaperTrade, PnLRecord, TradingMode
 from .paper_broker import PaperBroker
 from .risk_manager import RiskManager
 
@@ -31,6 +32,7 @@ class Executor:
         risk_manager: RiskManager,
         paper_broker: PaperBroker | None = None,
         live_broker: LiveBroker | None = None,
+        csv_writer: CsvWriter | None = None,
         allow_live: bool = False,
         order_amount_usd: float = 50.0,
     ):
@@ -38,6 +40,7 @@ class Executor:
         self._risk = risk_manager
         self._paper = paper_broker or PaperBroker()
         self._live = live_broker
+        self._csv = csv_writer
         self._allow_live = allow_live
         self._order_amount_usd = order_amount_usd
 
@@ -48,6 +51,7 @@ class Executor:
         self._total_pnl = 0.0
         self._orders: list[Order] = []
         self._fills: list[Fill] = []
+        self._paper_trades: list[PaperTrade] = []
 
     @property
     def mode(self) -> TradingMode:
@@ -70,7 +74,6 @@ class Executor:
 
     def _parse_signal_to_order(self, signal: Signal) -> Order:
         """シグナルからOrderを生成する。"""
-        # direction は "Buy-Yes" / "Sell-No" 等
         parts = signal.direction.split("-")
         side = parts[0].lower() if len(parts) > 0 else "buy"
         outcome = parts[1] if len(parts) > 1 else "Yes"
@@ -89,11 +92,7 @@ class Executor:
         )
 
     async def process_signals(self, signals: list[Signal]) -> list[Order]:
-        """シグナルリストを処理し、発注判断を行う。
-
-        Returns:
-            処理した Order のリスト（約定・拒否含む）
-        """
+        """シグナルリストを処理し、発注判断を行う。"""
         results: list[Order] = []
 
         for signal in signals:
@@ -157,13 +156,28 @@ class Executor:
         return order
 
     async def _handle_paper(self, order: Order, signal: Signal) -> Order:
-        """Paper: 仮想約定を行う。"""
+        """Paper: 仮想約定 → exit シミュレーション → PnL記録。"""
         fill = await self._paper.submit_order(order)
 
         if fill:
             self._total_fills += 1
             self._fills.append(fill)
             self._risk.record_order(signal.market_id, order.amount_usdc)
+
+            # 仮想決済シミュレーション
+            paper_trade = self._paper.simulate_exit(
+                fill, order, signal.detected_at
+            )
+            self._paper_trades.append(paper_trade)
+            self._total_pnl += paper_trade.pnl_usd
+
+            # 損失をリスクマネージャーに記録
+            if paper_trade.pnl_usd < 0:
+                self._risk.record_loss(abs(paper_trade.pnl_usd))
+
+            # CSV出力
+            if self._csv:
+                self._csv.append(paper_trade)
 
         self._orders.append(order)
         return order
@@ -200,3 +214,6 @@ class Executor:
 
     def get_recent_fills(self, limit: int = 20) -> list[Fill]:
         return self._fills[-limit:]
+
+    def get_recent_paper_trades(self, limit: int = 20) -> list[PaperTrade]:
+        return self._paper_trades[-limit:]

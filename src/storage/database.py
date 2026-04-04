@@ -108,6 +108,27 @@ class Database:
                 mode TEXT NOT NULL,
                 recorded_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                trade_id TEXT PRIMARY KEY,
+                order_id TEXT NOT NULL,
+                signal_time TEXT NOT NULL,
+                market_id TEXT NOT NULL,
+                market_title TEXT,
+                direction TEXT,
+                entry_price REAL,
+                entry_amount_usd REAL,
+                exit_price REAL,
+                pnl_usd REAL,
+                holding_minutes REAL,
+                result TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_market
+                ON paper_trades(market_id);
+            CREATE INDEX IF NOT EXISTS idx_paper_trades_result
+                ON paper_trades(result);
             """
         )
         logger.info("データベース初期化完了: %s", self._db_path)
@@ -250,6 +271,136 @@ class Database:
             ),
         )
         await self._db.commit()
+
+    async def insert_paper_trade(self, pt) -> None:
+        """PaperTrade を保存する。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO paper_trades
+            (trade_id, order_id, signal_time, market_id, market_title,
+             direction, entry_price, entry_amount_usd, exit_price,
+             pnl_usd, holding_minutes, result, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pt.trade_id,
+                pt.order_id,
+                pt.signal_time.isoformat(),
+                pt.market_id,
+                pt.market_title,
+                pt.direction,
+                pt.entry_price,
+                pt.entry_amount_usd,
+                pt.exit_price,
+                pt.pnl_usd,
+                pt.holding_minutes,
+                pt.result,
+                pt.created_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_all_paper_trades(self) -> list[dict]:
+        """全PaperTradeを時系列で取得する。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            "SELECT * FROM paper_trades ORDER BY created_at ASC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_paper_trade_summary(self) -> dict:
+        """Paper取引の集計統計を返す。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM paper_trades"
+        )
+        total = (await cursor.fetchone())[0]
+
+        if total == 0:
+            return {
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "total_pnl": 0.0,
+                "max_consecutive_losses": 0,
+                "avg_holding_minutes": 0.0,
+                "best_trade": 0.0,
+                "worst_trade": 0.0,
+            }
+
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM paper_trades WHERE result = 'win'"
+        )
+        wins = (await cursor.fetchone())[0]
+        losses = total - wins
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(AVG(pnl_usd), 0) FROM paper_trades WHERE result = 'win'"
+        )
+        avg_win = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(AVG(pnl_usd), 0) FROM paper_trades WHERE result = 'loss'"
+        )
+        avg_loss = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(SUM(pnl_usd), 0) FROM paper_trades"
+        )
+        total_pnl = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(AVG(holding_minutes), 0) FROM paper_trades"
+        )
+        avg_hold = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(MAX(pnl_usd), 0) FROM paper_trades"
+        )
+        best = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            "SELECT COALESCE(MIN(pnl_usd), 0) FROM paper_trades"
+        )
+        worst = (await cursor.fetchone())[0]
+
+        # 最大連敗を計算
+        cursor = await self._db.execute(
+            "SELECT result FROM paper_trades ORDER BY created_at ASC"
+        )
+        results = [row[0] for row in await cursor.fetchall()]
+        max_streak = 0
+        current_streak = 0
+        for r in results:
+            if r == "loss":
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        return {
+            "total_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(wins / total * 100, 1) if total > 0 else 0.0,
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "total_pnl": round(total_pnl, 2),
+            "max_consecutive_losses": max_streak,
+            "avg_holding_minutes": round(avg_hold, 1),
+            "best_trade": round(best, 2),
+            "worst_trade": round(worst, 2),
+        }
 
     async def get_recent_trades(self, limit: int = 50) -> list[dict]:
         if not self._db:

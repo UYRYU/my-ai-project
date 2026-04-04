@@ -76,3 +76,25 @@ class PnLRecord:
     recorded_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+
+
+@dataclass
+class PaperTrade:
+    """Paper取引の完全記録。エントリーから仮想決済まで。"""
+    trade_id: str = field(default_factory=lambda: uuid4().hex[:12])
+    order_id: str = ""
+    signal_time: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    market_id: str = ""
+    market_title: str = ""
+    direction: str = ""  # "Buy-Yes" etc
+    entry_price: float = 0.0
+    entry_amount_usd: float = 0.0
+    exit_price: float = 0.0
+    pnl_usd: float = 0.0
+    holding_minutes: float = 0.0
+    result: str = ""  # "win" or "loss"
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
