@@ -2,6 +2,7 @@
     "// Python インタプリタ": "",
     "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe",
     "python.terminal.activateEnvironment": true,
+    "python.envFile": "${workspaceFolder}/.env",
 
     "// ターミナル設定（Windows）": "",
     "terminal.integrated.defaultProfile.windows": "PowerShell",
