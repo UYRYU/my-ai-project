@@ -1,0 +1,6 @@
+address,label,note
+0x1234567890abcdef1234567890abcdef12345678,Whale_A,高頻度トレーダー
+0xabcdef1234567890abcdef1234567890abcdef12,Whale_B,大口ポジション
+0x9876543210fedcba9876543210fedcba98765432,Smart_Money_1,シグナルフォロー
+0xfedcba9876543210fedcba9876543210fedcba98,Smart_Money_2,早期参入傾向
+0x1111222233334444555566667777888899990000,Tracker_1,監視対象
