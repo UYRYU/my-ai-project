@@ -32,6 +32,22 @@ class Config:
     log_level: str = "INFO"
     wallets: list[WalletEntry] = field(default_factory=list)
 
+    # --- Execution 設定 ---
+    trading_mode: str = "paper"  # "paper", "live", "dry-run"
+    max_order_usd: float = 50.0
+    max_position_usd: float = 200.0
+    max_daily_loss_usd: float = 100.0
+    min_signal_level: str = "STRONG"
+    allow_live_trading: bool = False
+    kill_switch: bool = False
+    order_cooldown_sec: int = 300
+
+    # --- Polymarket認証情報 ---
+    poly_private_key: str = ""
+    poly_api_key: str = ""
+    poly_api_secret: str = ""
+    poly_api_passphrase: str = ""
+
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
@@ -45,6 +61,20 @@ class Config:
             data_source=os.getenv("DATA_SOURCE", "mock"),
             db_path=os.getenv("DB_PATH", "tracker.db"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            # Execution
+            trading_mode=os.getenv("TRADING_MODE", "paper"),
+            max_order_usd=float(os.getenv("MAX_ORDER_USD", "50")),
+            max_position_usd=float(os.getenv("MAX_POSITION_USD", "200")),
+            max_daily_loss_usd=float(os.getenv("MAX_DAILY_LOSS_USD", "100")),
+            min_signal_level=os.getenv("MIN_SIGNAL_LEVEL", "STRONG"),
+            allow_live_trading=os.getenv("ALLOW_LIVE_TRADING", "false").lower() == "true",
+            kill_switch=os.getenv("KILL_SWITCH", "false").lower() == "true",
+            order_cooldown_sec=int(os.getenv("ORDER_COOLDOWN_SEC", "300")),
+            # Polymarket Auth
+            poly_private_key=os.getenv("POLY_PRIVATE_KEY", ""),
+            poly_api_key=os.getenv("POLY_API_KEY", ""),
+            poly_api_secret=os.getenv("POLY_API_SECRET", ""),
+            poly_api_passphrase=os.getenv("POLY_API_PASSPHRASE", ""),
         )
 
     def load_wallets(self, csv_path: str = "wallets_seed.csv") -> None:

@@ -1,5 +1,6 @@
 """SQLiteデータベース管理モジュール。"""
 
+import json
 import logging
 
 import aiosqlite
@@ -58,6 +59,55 @@ class Database:
                 ON signals(market_id);
             CREATE INDEX IF NOT EXISTS idx_signals_detected
                 ON signals(detected_at);
+
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,
+                signal_market_id TEXT,
+                signal_direction TEXT,
+                market_id TEXT NOT NULL,
+                market_title TEXT,
+                side TEXT,
+                outcome TEXT,
+                amount_usdc REAL,
+                limit_price REAL,
+                status TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                reject_reason TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_orders_market
+                ON orders(market_id);
+            CREATE INDEX IF NOT EXISTS idx_orders_status
+                ON orders(status);
+
+            CREATE TABLE IF NOT EXISTS fills (
+                fill_id TEXT PRIMARY KEY,
+                order_id TEXT NOT NULL,
+                market_id TEXT NOT NULL,
+                side TEXT,
+                outcome TEXT,
+                amount_usdc REAL,
+                fill_price REAL,
+                mode TEXT NOT NULL,
+                filled_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (order_id) REFERENCES orders(order_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fills_order
+                ON fills(order_id);
+
+            CREATE TABLE IF NOT EXISTS pnl (
+                record_id TEXT PRIMARY KEY,
+                market_id TEXT NOT NULL,
+                side TEXT,
+                outcome TEXT,
+                entry_price REAL,
+                amount_usdc REAL,
+                realized_pnl REAL DEFAULT 0,
+                mode TEXT NOT NULL,
+                recorded_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         logger.info("データベース初期化完了: %s", self._db_path)
@@ -94,11 +144,88 @@ class Database:
         await self._db.commit()
         return inserted
 
+    async def insert_order(self, order) -> None:
+        """Order を保存する。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO orders
+            (order_id, signal_market_id, signal_direction, market_id,
+             market_title, side, outcome, amount_usdc, limit_price,
+             status, mode, reject_reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                order.order_id,
+                order.signal_market_id,
+                order.signal_direction,
+                order.market_id,
+                order.market_title,
+                order.side,
+                order.outcome,
+                order.amount_usdc,
+                order.limit_price,
+                order.status.value,
+                order.mode.value,
+                order.reject_reason,
+                order.created_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+
+    async def insert_fill(self, fill) -> None:
+        """Fill を保存する。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO fills
+            (fill_id, order_id, market_id, side, outcome,
+             amount_usdc, fill_price, mode, filled_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fill.fill_id,
+                fill.order_id,
+                fill.market_id,
+                fill.side,
+                fill.outcome,
+                fill.amount_usdc,
+                fill.fill_price,
+                fill.mode.value,
+                fill.filled_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_order_count(self) -> int:
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        cursor = await self._db.execute("SELECT COUNT(*) FROM orders")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_fill_count(self) -> int:
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        cursor = await self._db.execute("SELECT COUNT(*) FROM fills")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_total_pnl(self, mode: str = "paper") -> float:
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        cursor = await self._db.execute(
+            "SELECT COALESCE(SUM(realized_pnl), 0) FROM pnl WHERE mode = ?",
+            (mode,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0.0
+
     async def insert_signal(self, signal: Signal) -> None:
         if not self._db:
             raise RuntimeError("Database not initialized")
-
-        import json
 
         await self._db.execute(
             """

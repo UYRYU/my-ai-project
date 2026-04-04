@@ -102,13 +102,59 @@ class TerminalUI:
                 )
             )
 
+    def show_execution_status(self, exec_stats: dict) -> None:
+        """Executor の統計情報を表示する。"""
+        mode = exec_stats.get("mode", "N/A")
+        mode_style = {
+            "PAPER": "bold cyan",
+            "LIVE": "bold red",
+            "DRY-RUN": "bold yellow",
+        }.get(mode, "dim")
+
+        risk = exec_stats.get("risk", {})
+        halted = risk.get("halted", False)
+        halt_indicator = " [bold red][HALTED][/bold red]" if halted else ""
+
+        content = (
+            f"[bold]Mode:[/bold] [{mode_style}]{mode}[/{mode_style}]{halt_indicator}\n"
+            f"[bold]Orders:[/bold] {exec_stats.get('total_orders', 0)} "
+            f"(Filled: {exec_stats.get('total_fills', 0)}, "
+            f"Rejected: {exec_stats.get('total_rejects', 0)})\n"
+            f"[bold]Daily Loss:[/bold] "
+            f"${risk.get('daily_loss', 0):.2f} / ${risk.get('max_daily_loss', 0):.2f}\n"
+            f"[bold]PnL:[/bold] ${exec_stats.get('total_pnl', 0):.2f}"
+        )
+
+        self.console.print(
+            Panel(content, title="Execution Status", style="cyan", expand=False)
+        )
+
+    def show_order_result(self, order) -> None:
+        """個別の注文結果を表示する。"""
+        status = order.status.value.upper()
+        if status == "FILLED":
+            style = "green"
+        elif status == "REJECTED":
+            style = "yellow"
+        else:
+            style = "red"
+
+        reason = f" ({order.reject_reason})" if order.reject_reason else ""
+        self.console.print(
+            f"  [{style}][{order.mode.value.upper()}] "
+            f"{status}: {order.market_title[:30]} "
+            f"{order.direction} ${order.amount_usdc:.2f}{reason}[/{style}]"
+        )
+
     def show_status(
-        self, cycle: int, trade_count: int, signal_count: int, next_poll: int
+        self, cycle: int, trade_count: int, signal_count: int, next_poll: int,
+        order_count: int = 0, fill_count: int = 0,
     ) -> None:
         self.console.print()
         self.console.print(
             f"  [dim]--- Cycle #{cycle} 完了 | "
             f"累計取引: {trade_count} | 累計シグナル: {signal_count} | "
+            f"発注: {order_count} | 約定: {fill_count} | "
             f"次回取得まで {next_poll}秒 ---[/dim]"
         )
         self.console.print()

@@ -1,116 +1,151 @@
 # Polymarket Wallet Tracker Terminal
 
-複数ウォレットのPolymarket取引を監視し、同一マーケットへの集中的な取引（クラスタ）をシグナルとして検知するCLIツール。
+複数ウォレットのPolymarket取引を監視し、同一マーケットへの集中的な取引（クラスタ）をシグナルとして検知するCLIツール。シグナルに基づく自動売買（paper / dry-run / live）に対応。
 
 ## フォルダ構成
 
 ```
-├── main.py                  # エントリーポイント
+├── main.py                      # エントリーポイント
 ├── src/
-│   ├── config.py            # 設定管理（.env + CSV読み込み）
-│   ├── collector/           # データ取得層（差し替え可能）
-│   │   ├── base.py          # 抽象インターフェース + Trade型
-│   │   ├── mock.py          # モックデータ生成
-│   │   └── polymarket.py    # Polymarket API接続
-│   ├── processor/           # データ処理
-│   │   ├── normalizer.py    # 正規化・重複除去
-│   │   └── signal_detector.py  # クラスタ検知・スコアリング
-│   ├── storage/             # データ永続化
-│   │   └── database.py      # SQLite管理
-│   ├── ui/                  # 表示
-│   │   └── terminal.py      # Rich CLIターミナル
-│   └── notifier/            # 通知
-│       └── discord.py       # Discord Webhook
-├── tests/                   # pytest テスト
-├── wallets_seed.csv         # 監視ウォレット一覧（サンプル）
+│   ├── config.py                # 設定管理（.env + CSV読み込み）
+│   ├── collector/               # データ取得層（差し替え可能）
+│   │   ├── base.py              # 抽象インターフェース + Trade型
+│   │   ├── mock.py              # モックデータ生成
+│   │   └── polymarket.py        # Polymarket API接続
+│   ├── processor/               # データ処理
+│   │   ├── normalizer.py        # 正規化・重複除去
+│   │   └── signal_detector.py   # クラスタ検知・スコアリング
+│   ├── execution/               # 自動売買レイヤー
+│   │   ├── models.py            # Order / Fill / PnL データモデル
+│   │   ├── executor.py          # シグナル→発注のオーケストレーター
+│   │   ├── risk_manager.py      # リスク管理（上限・kill switch）
+│   │   ├── paper_broker.py      # 仮想約定（Paperモード）
+│   │   └── live_broker.py       # 実注文（Liveモード / CLOB API）
+│   ├── storage/                 # データ永続化
+│   │   └── database.py          # SQLite（trades/signals/orders/fills/pnl）
+│   ├── ui/                      # 表示
+│   │   └── terminal.py          # Rich CLIターミナル
+│   └── notifier/                # 通知
+│       └── discord.py           # Discord Webhook
+├── tests/                       # pytest テスト（26件）
+├── .vscode/                     # VSCode設定（デバッグ・タスク）
+├── wallets_seed.csv             # 監視ウォレット一覧（サンプル）
+├── start.bat                    # Windows cmd 起動スクリプト
+├── start.ps1                    # Windows PowerShell 起動スクリプト
 ├── requirements.txt
+├── pyproject.toml
 ├── .env.example
 └── README.md
 ```
 
 ## セットアップ
 
-### 1. Python環境の準備
+### Windows（VSCode推奨）
 
-Python 3.11以上が必要です。
-
-```bash
-# 仮想環境を作成（推奨）
+```powershell
+git clone <repository-url>
+cd my-ai-project
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS/Linux
-source venv/bin/activate
-```
-
-### 2. 依存パッケージのインストール
-
-```bash
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-### 3. 設定ファイルの準備
-
-```bash
-cp .env.example .env
-```
-
-`.env` を編集して設定を調整してください。
-
-### 4. ウォレットの登録
-
-`wallets_seed.csv` を編集して、監視したいウォレットアドレスを追加してください。
-
-```csv
-address,label,note
-0x1234...,Whale_A,大口トレーダー
-```
-
-## 実行
-
-### モックモードで起動（デフォルト）
-
-```bash
+copy .env.example .env
 python main.py
 ```
 
-### 本番モードで起動
+またはダブルクリック: `start.bat`
 
-`.env` で `DATA_SOURCE=polymarket` に変更してから実行。
-
-### テスト実行
+### macOS / Linux
 
 ```bash
-pytest tests/ -v
+git clone <repository-url>
+cd my-ai-project
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python main.py
 ```
 
-## MVPシグナル条件
+## 取引モード
 
-以下の条件を**すべて**満たした場合にシグナルを発報します：
+3つのモードを `.env` の `TRADING_MODE` で切り替え可能:
 
-| 条件 | デフォルト値 |
-|------|------------|
-| 同一マーケット | 必須 |
-| 時間窓 | 5分（300秒） |
-| 最小ウォレット数 | 3 |
-| 同方向の注文 | Buy-Yes / Buy-No / Sell-Yes / Sell-No |
-| 強シグナル閾値 | 合計 $1,000 以上 |
+| モード | 動作 | 用途 |
+|--------|------|------|
+| `paper` | 仮想約定（デフォルト） | 戦略検証・動作確認 |
+| `dry-run` | 注文内容を表示するだけ | 本番前の最終確認 |
+| `live` | 実注文を送信 | 本番運用 |
 
-すべて `.env` で変更可能です。
+### Paper モードで検証する手順
 
-## Discord通知
+1. `.env` で `TRADING_MODE=paper`（デフォルト）
+2. `python main.py` で起動
+3. シグナル検知時に仮想約定が行われる
+4. `Execution Status` パネルで注文数・約定数・損益を確認
+5. SQLite `tracker.db` の `orders` / `fills` テーブルで履歴確認
 
-`.env` に `DISCORD_WEBHOOK_URL` を設定するとシグナル検知時にDiscordへ通知されます。
+### Live モードへの移行手順
+
+**段階的に進めること。いきなり live にしない。**
+
+1. **paper で十分に検証** → 約定ログと損益を確認
+2. **dry-run で確認** → `.env` で `TRADING_MODE=dry-run` に変更、注文内容が正しいか確認
+3. **Live の認証情報を設定**:
+   ```
+   POLY_PRIVATE_KEY=0x...
+   POLY_API_KEY=...
+   POLY_API_SECRET=...
+   POLY_API_PASSPHRASE=...
+   ```
+4. **py-clob-client をインストール**: `pip install py-clob-client`
+5. **安全装置を確認**: `MAX_ORDER_USD=50`, `MAX_DAILY_LOSS_USD=100`
+6. **TRADING_MODE=live に変更**
+7. **ALLOW_LIVE_TRADING=true に変更**（二重安全装置）
+8. 起動して動作を監視
+
+## リスク管理
+
+| 設定項目 | デフォルト | 説明 |
+|---------|-----------|------|
+| `MAX_ORDER_USD` | 50 | 1回あたりの最大注文額 |
+| `MAX_POSITION_USD` | 200 | マーケットごとの最大ポジション |
+| `MAX_DAILY_LOSS_USD` | 100 | 日次損失上限（到達で自動停止） |
+| `MIN_SIGNAL_LEVEL` | STRONG | 発注対象のシグナルレベル |
+| `ORDER_COOLDOWN_SEC` | 300 | 同一マーケットへの連続発注制限 |
+| `ALLOW_LIVE_TRADING` | false | Live取引の二重安全装置 |
+| `KILL_SWITCH` | false | 緊急停止フラグ |
+
+### 緊急停止（Kill Switch）
+
+以下のいずれかで全注文を即座に停止:
+
+1. `.env` で `KILL_SWITCH=true` に変更
+2. プロジェクトルートに `KILL_SWITCH` ファイルを作成: `echo. > KILL_SWITCH`
+3. 環境変数 `KILL_SWITCH=true` を設定
+
+## Live モードに必要な認証情報
+
+| 項目 | 取得方法 |
+|------|---------|
+| `POLY_PRIVATE_KEY` | Polygonウォレットの秘密鍵 |
+| `POLY_API_KEY` | Polymarket CLOB API Key |
+| `POLY_API_SECRET` | Polymarket CLOB API Secret |
+| `POLY_API_PASSPHRASE` | Polymarket CLOB API Passphrase |
+
+**注意**: Paper/dry-run モードでは認証情報は不要です。
+
+## テスト実行
+
+```bash
+python -m pytest tests/ -v
+```
 
 ## 今後の拡張ポイント
 
-- **Web UI**: Rich CLI → FastAPI + React へ移行
-- **リアルタイムWebSocket**: ポーリングからWebSocket購読へ
-- **ウォレットスコアリング**: 過去の的中率に基づくウォレット信頼度
-- **マルチチェーン対応**: Polygon以外のチェーンにも対応
-- **アラート条件の高度化**: ポジションサイズの変化率、タイミングパターン
-- **バックテスト機能**: 過去データでシグナル精度を検証
-- **API化**: 他ツールから利用可能なREST API
+- **ポジション管理**: 保有ポジションの時価評価・自動利確/損切
+- **バックテスト**: 過去データでシグナル精度と損益をシミュレーション
+- **Web UI**: FastAPI + React でブラウザ管理
+- **ウォレットスコアリング**: 的中率に基づく信頼度スコア
+- **WebSocket**: ポーリングからリアルタイム購読へ
+- **マルチチェーン**: Polygon以外のチェーンにも対応
 - **ダッシュボード**: Grafana等でのビジュアル分析
