@@ -126,11 +126,16 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
         console.print("  python main.py でトラッカーを起動してデータを蓄積してください。")
         return
 
+    # モデルバージョン検出
+    model_versions = set(t.get("model_version", "unknown") for t in trades)
+    model_label = ", ".join(sorted(model_versions)) if model_versions else "unknown"
+
     pnl_style = "green" if summary["total_pnl"] >= 0 else "red"
     wr_style = "green" if summary["win_rate"] >= 50 else "red"
     pf_str = f"{summary['profit_factor']}" if summary["profit_factor"] != float("inf") else "∞"
 
     summary_text = (
+        f"[bold]モデル:[/bold]          [magenta]{model_label}[/magenta]\n"
         f"[bold]総トレード数:[/bold]    {summary['count']}\n"
         f"[bold]勝敗:[/bold]            "
         f"[green]{summary['wins']}W[/green] / "
@@ -186,6 +191,7 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
     table.add_column("PnL", justify="right", width=10)
     table.add_column("Hold", justify="right", width=8)
     table.add_column("Result", width=6)
+    table.add_column("Model", style="dim", width=10)
 
     for i, t in enumerate(trades, 1):
         pnl = t["pnl_usd"]
@@ -208,6 +214,7 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
             Text(f"${pnl:+.2f}", style=pnl_s),
             f"{t['holding_minutes']:.0f}m",
             Text(t["result"].upper(), style=result_s),
+            t.get("model_version", "?"),
         )
 
     console.print(table)

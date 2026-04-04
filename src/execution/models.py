@@ -95,6 +95,7 @@ class PaperTrade:
     pnl_usd: float = 0.0
     holding_minutes: float = 0.0
     result: str = ""  # "win" or "loss"
+    model_version: str = "v2_binary"  # "v1_random" or "v2_binary"
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

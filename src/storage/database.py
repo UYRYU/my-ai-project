@@ -122,6 +122,7 @@ class Database:
                 pnl_usd REAL,
                 holding_minutes REAL,
                 result TEXT,
+                model_version TEXT DEFAULT 'v2_binary',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -281,8 +282,8 @@ class Database:
             INSERT OR REPLACE INTO paper_trades
             (trade_id, order_id, signal_time, market_id, market_title,
              direction, entry_price, entry_amount_usd, exit_price,
-             pnl_usd, holding_minutes, result, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             pnl_usd, holding_minutes, result, model_version, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 pt.trade_id,
@@ -297,6 +298,7 @@ class Database:
                 pt.pnl_usd,
                 pt.holding_minutes,
                 pt.result,
+                pt.model_version,
                 pt.created_at.isoformat(),
             ),
         )

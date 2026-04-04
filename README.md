@@ -19,15 +19,18 @@
 │   │   ├── models.py            # Order / Fill / PnL データモデル
 │   │   ├── executor.py          # シグナル→発注のオーケストレーター
 │   │   ├── risk_manager.py      # リスク管理（上限・kill switch）
-│   │   ├── paper_broker.py      # 仮想約定（Paperモード）
+│   │   ├── paper_broker.py      # 仮想約定（v2_binary / v1_random 切替可）
+│   │   ├── csv_writer.py        # Paper取引CSV出力
 │   │   └── live_broker.py       # 実注文（Liveモード / CLOB API）
+│   ├── analytics.py             # 分析エンジン（市場別・時間帯別・DD等）
 │   ├── storage/                 # データ永続化
 │   │   └── database.py          # SQLite（trades/signals/orders/fills/pnl）
 │   ├── ui/                      # 表示
 │   │   └── terminal.py          # Rich CLIターミナル
 │   └── notifier/                # 通知
 │       └── discord.py           # Discord Webhook
-├── tests/                       # pytest テスト（26件）
+├── report.py                    # パフォーマンスレポートCLI
+├── tests/                       # pytest テスト（49件）
 ├── .vscode/                     # VSCode設定（デバッグ・タスク）
 ├── wallets_seed.csv             # 監視ウォレット一覧（サンプル）
 ├── start.bat                    # Windows cmd 起動スクリプト
@@ -83,6 +86,36 @@ python main.py
 3. シグナル検知時に仮想約定が行われる
 4. `Execution Status` パネルで注文数・約定数・損益を確認
 5. SQLite `tracker.db` の `orders` / `fills` テーブルで履歴確認
+6. `python report.py` で詳細レポートを表示
+7. `python report.py --equity-csv` でエクイティカーブをCSV出力
+
+### Paper モデル（v2: Binary Outcome Model）
+
+デフォルトの仮想決済モデルは **v2_binary**（二値収束モデル）です。
+
+Polymarketは二値オプション（最終的に $1.00 か $0.00 に解決）です。
+v2モデルはこの特性を忠実に再現します:
+
+| Side | 勝ち条件 | exit | 負け条件 | exit |
+|------|---------|------|---------|------|
+| **Buy** | 確率 = entry_price で的中 | 0.99 | 確率 = 1-entry_price で外れ | 0.01 |
+| **Sell** | 確率 = 1-entry_price で的中 | 0.01 | 確率 = entry_price で外れ | 0.99 |
+
+**損益計算:**
+- Buy: `PnL = (exit - entry) * shares` （`shares = amount / entry`）
+- Sell: `PnL = (entry - exit) * shares`
+
+**特徴:**
+- entry_price = 市場推定の勝率。安い(0.20)なら勝率20%だが1勝の利益が大きい
+- 効率的市場の仮定では期待PnL ≈ 0。シグナルが正しければプラスに偏る
+- 旧v1モデル（ランダム±15%）と異なり、Polymarketの本質を反映
+
+**旧モデルに切り替え:**
+```
+LEGACY_PAPER_MODEL=true
+```
+
+v1(random) と v2(binary) の取引は `model_version` 列で区別され、レポートにも表示されます。
 
 ### Live モードへの移行手順
 
@@ -114,6 +147,7 @@ python main.py
 | `ORDER_COOLDOWN_SEC` | 300 | 同一マーケットへの連続発注制限 |
 | `ALLOW_LIVE_TRADING` | false | Live取引の二重安全装置 |
 | `KILL_SWITCH` | false | 緊急停止フラグ |
+| `LEGACY_PAPER_MODEL` | false | true でv1(random)モデルに切替 |
 
 ### 緊急停止（Kill Switch）
 

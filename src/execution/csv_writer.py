@@ -21,6 +21,7 @@ CSV_HEADER = [
     "pnl_usd",
     "holding_minutes",
     "result",
+    "model_version",
     "created_at",
 ]
 
@@ -58,6 +59,7 @@ class CsvWriter:
                     trade.pnl_usd,
                     trade.holding_minutes,
                     trade.result,
+                    trade.model_version,
                     trade.created_at.isoformat(),
                 ])
         except Exception as e:

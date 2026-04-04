@@ -41,6 +41,7 @@ class Config:
     allow_live_trading: bool = False
     kill_switch: bool = False
     order_cooldown_sec: int = 300
+    legacy_paper_model: bool = False
 
     # --- Polymarket認証情報 ---
     poly_private_key: str = ""
@@ -70,6 +71,7 @@ class Config:
             allow_live_trading=os.getenv("ALLOW_LIVE_TRADING", "false").lower() == "true",
             kill_switch=os.getenv("KILL_SWITCH", "false").lower() == "true",
             order_cooldown_sec=int(os.getenv("ORDER_COOLDOWN_SEC", "300")),
+            legacy_paper_model=os.getenv("LEGACY_PAPER_MODEL", "false").lower() == "true",
             # Polymarket Auth
             poly_private_key=os.getenv("POLY_PRIVATE_KEY", ""),
             poly_api_key=os.getenv("POLY_API_KEY", ""),
