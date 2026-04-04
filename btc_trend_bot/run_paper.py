@@ -89,6 +89,17 @@ def run_historical_single(config: dict, data_path: str, strategy_name: str, exit
     strat_config = config.get("strategies", {}).get(strategy_name, {})
     strategy = strategy_class(strat_config)
 
+    # Set up higher TF data for multi_tf strategies
+    if hasattr(strategy, "set_higher_tf_data"):
+        logger.info("Preparing higher timeframe (4h) data for multi_tf strategy...")
+        higher_tf_df = df.resample("4h").agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }).dropna()
+        higher_tf_df = fe.add_all_features(higher_tf_df)
+        strategy.set_higher_tf_data(higher_tf_df)
+        logger.info(f"Higher TF data set: {len(higher_tf_df)} bars (4h)")
+
     # Generate signals
     signals = strategy.generate_signals(df)
     logger.info(f"Strategy '{strategy_name}' generated {len(signals)} signals")

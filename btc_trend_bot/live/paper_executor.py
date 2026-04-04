@@ -85,6 +85,16 @@ class PaperExecutor:
             logger.info("Pre-computing features for historical simulation...")
             df = self.signal_engine.fe.add_all_features(df)
 
+        # Set up higher TF data for multi_tf strategies
+        if self.signal_engine.needs_higher_tf:
+            logger.info("Preparing higher timeframe (4h) data for multi_tf strategies...")
+            higher_tf_df = df.resample("4h").agg({
+                "open": "first", "high": "max", "low": "min",
+                "close": "last", "volume": "sum",
+            }).dropna()
+            self.signal_engine.update_higher_tf(higher_tf_df)
+            logger.info("Higher TF data set: {} bars (4h)", len(higher_tf_df))
+
         # Pre-generate ALL signals at once (much faster than per-bar)
         logger.info("Pre-generating signals from all strategies...")
         all_signals: dict[pd.Timestamp, list] = {}
@@ -226,16 +236,47 @@ class PaperExecutor:
             self.capital = float(persisted_capital)
             logger.info("Restored capital: {:.2f}", self.capital)
 
+        # Fetch initial higher TF data for multi_tf strategies
+        if self.signal_engine.needs_higher_tf:
+            logger.info("Fetching initial higher TF (4h) data for multi_tf strategies...")
+            try:
+                htf_df = exchange_client.get_latest_bars(timeframe="4h", count=500)
+                if not htf_df.empty:
+                    self.signal_engine.update_higher_tf(htf_df)
+                    logger.info("Higher TF data loaded: {} bars (4h)", len(htf_df))
+            except Exception as exc:
+                logger.error("Failed to fetch higher TF data: {}", exc)
+
+        htf_refresh_counter = 0
+        htf_refresh_interval = 4  # refresh 4h data every 4 polling cycles
+
         while self._running:
             try:
                 # Fetch latest data
-                df = exchange_client.fetch_ohlcv(
-                    self.symbol, self.timeframe, limit=500
+                df = exchange_client.get_latest_bars(
+                    timeframe=self.timeframe, count=500
                 )
                 if df is None or df.empty:
                     logger.warning("No data received from exchange")
                     time.sleep(interval_seconds)
                     continue
+
+                # Refresh higher TF data periodically
+                if self.signal_engine.needs_higher_tf:
+                    htf_refresh_counter += 1
+                    if htf_refresh_counter >= htf_refresh_interval:
+                        htf_refresh_counter = 0
+                        try:
+                            htf_df = exchange_client.get_latest_bars(
+                                timeframe="4h", count=500
+                            )
+                            if not htf_df.empty:
+                                self.signal_engine.update_higher_tf(htf_df)
+                                logger.debug(
+                                    "Refreshed higher TF data: {} bars", len(htf_df)
+                                )
+                        except Exception as exc:
+                            logger.warning("Failed to refresh higher TF: {}", exc)
 
                 current_price = float(df.iloc[-1]["close"])
 

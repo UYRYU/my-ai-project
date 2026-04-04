@@ -1,11 +1,13 @@
 """Generate trading signals from live/streaming OHLCV data.
 
-Uses the existing strategy classes (pullback, breakout, reacceleration)
-and the shared FeatureEngineer to produce ``Signal`` objects that the
-paper executor can act on.
+Uses the existing strategy classes (pullback, breakout, reacceleration,
+multi_tf, and strict variants) and the shared FeatureEngineer to produce
+``Signal`` objects that the paper executor can act on.
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 import pandas as pd
 from loguru import logger
@@ -21,6 +23,7 @@ class SignalEngine:
         self.strategies: list[BaseStrategy] = []
         self.fe = FeatureEngineer(config.get("trend_detection", {}))
         self.min_bars: int = config.get("min_bars_required", 250)
+        self._multi_tf_strategies: list[BaseStrategy] = []  # strategies needing higher_tf
         self._setup_strategies(config)
 
     # ------------------------------------------------------------------
@@ -32,6 +35,7 @@ class SignalEngine:
         from btc_trend_bot.strategies.trend_long.pullback_strategy import PullbackStrategy
         from btc_trend_bot.strategies.trend_long.breakout_strategy import BreakoutStrategy
         from btc_trend_bot.strategies.trend_long.reacceleration_strategy import ReaccelerationStrategy
+        from btc_trend_bot.strategies.trend_long.multi_tf_strategy import MultiTFStrategy
 
         strategy_configs: dict = config.get("strategies", {})
         enabled: list[str] = config.get(
@@ -42,6 +46,7 @@ class SignalEngine:
             "pullback": PullbackStrategy,
             "breakout": BreakoutStrategy,
             "reacceleration": ReaccelerationStrategy,
+            "multi_tf": MultiTFStrategy,
         }
 
         # Add strict variants if available
@@ -73,10 +78,44 @@ class SignalEngine:
                 continue
             strat = cls(strategy_configs.get(name, {}))
             self.strategies.append(strat)
+            # Track strategies that need higher TF data
+            if hasattr(strat, "set_higher_tf_data"):
+                self._multi_tf_strategies.append(strat)
             logger.info("Enabled strategy: {}", name)
 
         if not self.strategies:
             logger.warning("No strategies enabled -- SignalEngine will produce no signals")
+
+    # ------------------------------------------------------------------
+    # Higher timeframe data
+    # ------------------------------------------------------------------
+
+    @property
+    def needs_higher_tf(self) -> bool:
+        """Return True if any enabled strategy requires higher timeframe data."""
+        return len(self._multi_tf_strategies) > 0
+
+    def update_higher_tf(self, higher_tf_df: pd.DataFrame) -> None:
+        """Pass higher timeframe data to all strategies that need it.
+
+        Also adds features (EMA, trend_regime, etc.) to the higher-TF
+        DataFrame before handing it to the strategies.
+        """
+        if higher_tf_df.empty:
+            logger.warning("Empty higher_tf DataFrame, skipping update")
+            return
+
+        # Add features to higher TF data
+        htf_featured = self.fe.add_all_features(higher_tf_df)
+
+        for strat in self._multi_tf_strategies:
+            strat.set_higher_tf_data(htf_featured)
+
+        logger.debug(
+            "Updated higher TF data for {} strategy(ies): {} bars",
+            len(self._multi_tf_strategies),
+            len(htf_featured),
+        )
 
     # ------------------------------------------------------------------
     # Signal generation
