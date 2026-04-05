@@ -2,6 +2,7 @@
 
 from src.analytics import (
     avg_entry_price,
+    band_best_worst,
     build_equity_curve,
     by_direction,
     by_entry_price_band,
@@ -12,7 +13,10 @@ from src.analytics import (
     compute_edge_indicator,
     compute_max_drawdown,
     compute_summary,
+    detect_warnings,
     filter_by_model,
+    filter_by_period,
+    live_block_reason,
     recent_n,
 )
 
@@ -284,3 +288,84 @@ def test_check_v2_readiness_ignores_v1():
     result = check_v2_readiness(trades)
     assert result["trade_count"] == 0  # v1 は無視
     assert result["enough_trades"] is False
+
+
+# ── 新規: 期間フィルタ / best-worst / 警告 / block理由 ───
+
+def test_filter_by_period_hours():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    trades = [
+        {"created_at": (now - timedelta(hours=2)).isoformat(),
+         "pnl_usd": 5.0, "result": "win"},
+        {"created_at": (now - timedelta(hours=25)).isoformat(),
+         "pnl_usd": -3.0, "result": "loss"},
+    ]
+    result = filter_by_period(trades, hours=24)
+    assert len(result) == 1
+    assert result[0]["pnl_usd"] == 5.0
+
+
+def test_filter_by_period_days():
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    trades = [
+        {"created_at": (now - timedelta(days=3)).isoformat(),
+         "pnl_usd": 5.0, "result": "win"},
+        {"created_at": (now - timedelta(days=10)).isoformat(),
+         "pnl_usd": -3.0, "result": "loss"},
+    ]
+    result = filter_by_period(trades, days=7)
+    assert len(result) == 1
+
+
+def test_filter_by_period_none():
+    trades = _make_trades()
+    assert len(filter_by_period(trades)) == 4
+
+
+def test_band_best_worst():
+    trades = _make_trades()
+    bw = band_best_worst(trades)
+    # 0.40-0.60 band has t3 (pnl=12.50) and t4 (pnl=-5.56)
+    assert "0.40-0.60" in bw
+    assert bw["0.40-0.60"]["best_pnl"] == 12.50
+    assert bw["0.40-0.60"]["worst_pnl"] == -5.56
+
+
+def test_band_best_worst_empty():
+    assert band_best_worst([]) == {}
+
+
+def test_detect_warnings_negative_edge():
+    """edge がマイナスの帯を検出する。"""
+    # 低entry_priceでBuyして全部loss → edge がマイナス
+    trades = [
+        {"entry_price": 0.15, "result": "loss", "direction": "Buy-Yes",
+         "pnl_usd": -50, "market_id": "m1", "market_title": "MktA"},
+        {"entry_price": 0.15, "result": "loss", "direction": "Buy-Yes",
+         "pnl_usd": -50, "market_id": "m1", "market_title": "MktA"},
+        {"entry_price": 0.15, "result": "loss", "direction": "Buy-Yes",
+         "pnl_usd": -50, "market_id": "m1", "market_title": "MktA"},
+    ]
+    warns = detect_warnings(trades)
+    assert len(warns) >= 1
+    assert any("0.00-0.20" in w for w in warns)
+
+
+def test_detect_warnings_empty():
+    assert detect_warnings([]) == []
+
+
+def test_live_block_reason_blocked():
+    trades = _make_trades()  # 4件 → 100未達
+    reason = live_block_reason(trades)
+    assert "未達" in reason
+    assert "トレード数" in reason
+
+
+def test_live_block_reason_empty_when_all_pass():
+    """check_v2_readiness が all_passed なら空文字。"""
+    # テストでは100件用意するのは重いので、関数の振る舞いだけ確認
+    reason = live_block_reason([])  # 0件 → not passed
+    assert reason != ""

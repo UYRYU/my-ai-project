@@ -7,6 +7,7 @@ trades は list[dict] で、各要素に以下のキーを持つ:
 """
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 
 def _safe_div(a: float, b: float, default: float = 0.0) -> float:
@@ -378,3 +379,113 @@ def check_v2_readiness(trades: list[dict]) -> dict:
         "all_passed": all(c["passed"] for c in checks),
         "checks": checks,
     }
+
+
+# ── 期間フィルタ ─────────────────────────────────────────────
+
+def _parse_time(ts: str) -> datetime | None:
+    """ISO / space-separated の日時文字列をパースする。"""
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(ts, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    return None
+
+
+def filter_by_period(trades: list[dict], hours: int | None = None, days: int | None = None) -> list[dict]:
+    """直近 N 時間 / N 日の取引を返す。"""
+    if hours is None and days is None:
+        return trades
+    now = datetime.now(timezone.utc)
+    if hours is not None:
+        cutoff = now - timedelta(hours=hours)
+    else:
+        cutoff = now - timedelta(days=days)
+
+    result = []
+    for t in trades:
+        ts = t.get("created_at") or t.get("signal_time", "")
+        dt = _parse_time(ts)
+        if dt and dt >= cutoff:
+            result.append(t)
+    return result
+
+
+# ── 帯別 best / worst ───────────────────────────────────────
+
+def band_best_worst(trades: list[dict]) -> dict[str, dict]:
+    """entry_price 帯別の best / worst PnL を返す。"""
+    groups: dict[str, list[dict]] = {label: [] for label, _, _ in PRICE_BANDS}
+    for t in trades:
+        ep = t.get("entry_price", 0)
+        for label, lo, hi in PRICE_BANDS:
+            if lo <= ep < hi or (hi == 1.0 and ep == 1.0):
+                groups[label].append(t)
+                break
+
+    result: dict[str, dict] = {}
+    for label, band_trades in groups.items():
+        if not band_trades:
+            continue
+        pnls = [t["pnl_usd"] for t in band_trades]
+        result[label] = {
+            "count": len(band_trades),
+            "best_pnl": round(max(pnls), 2),
+            "worst_pnl": round(min(pnls), 2),
+            "best_market": max(band_trades, key=lambda t: t["pnl_usd"]).get("market_title", "?")[:25],
+            "worst_market": min(band_trades, key=lambda t: t["pnl_usd"]).get("market_title", "?")[:25],
+        }
+    return result
+
+
+# ── 警告検出 ─────────────────────────────────────────────────
+
+def detect_warnings(trades: list[dict]) -> list[str]:
+    """edge がマイナスの帯・マーケットを警告メッセージとして返す。"""
+    warnings: list[str] = []
+
+    # 帯別 edge チェック
+    edge = compute_edge_indicator(trades)
+    for band, data in edge.get("edge_per_band", {}).items():
+        if data["edge_pct"] < 0 and data["count"] >= 3:
+            warnings.append(
+                f"[価格帯 {band}] edge={data['edge_pct']:+.1f}pp "
+                f"(実績{data['actual_win_rate']}% vs 期待{data['expected_win_rate']}%, "
+                f"n={data['count']})"
+            )
+
+    # マーケット別 edge チェック
+    markets = by_market(trades)
+    for mkt_name, mkt_stats in markets.items():
+        if mkt_stats["count"] < 3:
+            continue
+        mkt_trades = [t for t in trades if t.get("market_title", t.get("market_id")) == mkt_name]
+        mkt_edge = compute_edge_indicator(mkt_trades)
+        if mkt_edge["edge_pct"] < 0:
+            warnings.append(
+                f"[市場: {mkt_name[:25]}] edge={mkt_edge['edge_pct']:+.1f}pp "
+                f"(実績{mkt_edge['actual_win_rate']}% vs 期待{mkt_edge['expected_win_rate']}%, "
+                f"n={mkt_edge['count']})"
+            )
+
+    return warnings
+
+
+# ── Live移行不可理由 ──────────────────────────────────────────
+
+def live_block_reason(trades: list[dict]) -> str:
+    """Live移行不可の場合、最も重要な理由を1文で返す。空文字なら移行可。"""
+    ready = check_v2_readiness(trades)
+    if ready["all_passed"]:
+        return ""
+
+    for check in ready["checks"]:
+        if not check["passed"]:
+            return f"Live移行不可: {check['name']} が未達 ({check['value']})"
+    return ""

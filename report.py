@@ -2,7 +2,10 @@
 
 Usage:
     python report.py                # Richターミナル表示（全モデル）
-    python report.py --v2-only      # v2_binary のみ集計
+    python report.py --v2-only      # v2_binary のみ集計 + CSV自動保存
+    python report.py --period 24h   # 直近24時間のみ
+    python report.py --period 7d    # 直近7日のみ
+    python report.py --daily        # 日次レポートを reports/ に保存
     python report.py --csv          # CSVにもエクスポート
     python report.py --json         # JSON出力
     python report.py --equity-csv   # Equity curveをCSV出力
@@ -14,6 +17,8 @@ import csv
 import json
 import os
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console
@@ -23,6 +28,7 @@ from rich.text import Text
 
 from src.analytics import (
     avg_entry_price,
+    band_best_worst,
     build_equity_curve,
     by_direction,
     by_entry_price_band,
@@ -32,7 +38,10 @@ from src.analytics import (
     check_v2_readiness,
     compute_edge_indicator,
     compute_summary,
+    detect_warnings,
     filter_by_model,
+    filter_by_period,
+    live_block_reason,
     recent_n,
 )
 
@@ -155,6 +164,97 @@ def _show_edge_indicator(console: Console, trades: list[dict]) -> None:
     console.print()
 
 
+def _show_band_best_worst(console: Console, trades: list[dict]) -> None:
+    """帯別の best / worst トレードを表示する。"""
+    bw = band_best_worst(trades)
+    if not bw:
+        return
+
+    table = Table(title="Entry Price Band Best / Worst", show_lines=False, padding=(0, 1))
+    table.add_column("Band", width=10)
+    table.add_column("Count", justify="right", width=6)
+    table.add_column("Best PnL", justify="right", width=10)
+    table.add_column("Best Market", max_width=25)
+    table.add_column("Worst PnL", justify="right", width=10)
+    table.add_column("Worst Market", max_width=25)
+
+    for band, data in bw.items():
+        table.add_row(
+            band,
+            str(data["count"]),
+            f"[green]${data['best_pnl']:+.2f}[/green]",
+            data["best_market"],
+            f"[red]${data['worst_pnl']:+.2f}[/red]",
+            data["worst_market"],
+        )
+
+    console.print(table)
+    console.print()
+
+
+def _show_warnings(console: Console, trades: list[dict]) -> None:
+    """edge マイナスの帯・マーケットを警告表示する。"""
+    warns = detect_warnings(trades)
+    if not warns:
+        return
+
+    lines = ["[bold red]以下のセグメントでエッジがマイナスです:[/bold red]\n"]
+    for w in warns:
+        lines.append(f"  [red]WARNING[/red]  {w}")
+
+    console.print(Panel(
+        "\n".join(lines),
+        title="Edge Warnings",
+        style="red",
+        expand=False,
+    ))
+    console.print()
+
+
+def _show_period_comparison(console: Console, trades: list[dict]) -> None:
+    """直近24時間 / 直近7日 の成績を比較表示する。"""
+    last_24h = filter_by_period(trades, hours=24)
+    last_7d = filter_by_period(trades, days=7)
+
+    periods = [
+        ("直近24時間", last_24h),
+        ("直近7日", last_7d),
+        ("全期間", trades),
+    ]
+
+    table = Table(title="Period Comparison", show_lines=False, padding=(0, 1))
+    table.add_column("期間", style="white", width=12)
+    table.add_column("Count", justify="right", width=6)
+    table.add_column("Win%", justify="right", width=7)
+    table.add_column("Total PnL", justify="right", width=10)
+    table.add_column("Avg PnL", justify="right", width=10)
+    table.add_column("Edge", justify="right", width=10)
+    table.add_column("PF", justify="right", width=8)
+
+    for label, period_trades in periods:
+        if not period_trades:
+            table.add_row(label, "0", "-", "-", "-", "-", "-")
+            continue
+        s = compute_summary(period_trades)
+        e = compute_edge_indicator(period_trades)
+        wr_style = "green" if s["win_rate"] >= 50 else "red"
+        pnl_style = "green" if s["total_pnl"] >= 0 else "red"
+        e_style = "green" if e["edge_pct"] > 0 else "red"
+        pf_str = f"{s['profit_factor']}" if s["profit_factor"] != float("inf") else "INF"
+        table.add_row(
+            label,
+            str(s["count"]),
+            Text(f"{s['win_rate']}%", style=wr_style),
+            Text(f"${s['total_pnl']:+.2f}", style=pnl_style),
+            f"${s['avg_pnl']:+.2f}",
+            Text(f"{e['edge_pct']:+.1f}pp", style=e_style),
+            pf_str,
+        )
+
+    console.print(table)
+    console.print()
+
+
 def _show_readiness_check(console: Console, all_trades: list[dict]) -> None:
     """v2 検証完了チェックパネルを表示する。"""
     ready = check_v2_readiness(all_trades)
@@ -195,6 +295,7 @@ def show_report(
     signals_data: list[dict] | None,
     console: Console,
     v2_only: bool = False,
+    period_label: str = "",
 ) -> None:
     """Richでレポートを表示する。"""
     console.print()
@@ -205,7 +306,13 @@ def show_report(
         trades = filter_by_model(trades, "v2_binary")
 
     # --- ヘッダー ---
-    filter_label = " [v2_binary ONLY]" if v2_only else ""
+    filter_parts = []
+    if v2_only:
+        filter_parts.append("v2_binary ONLY")
+    if period_label:
+        filter_parts.append(period_label)
+    filter_label = f" [{', '.join(filter_parts)}]" if filter_parts else ""
+
     banner = Text()
     banner.append(f"  Paper Trading Performance Report{filter_label}  ", style="bold white on magenta")
     console.print(Panel(banner, style="magenta", expand=False))
@@ -253,11 +360,17 @@ def show_report(
     console.print(Panel(summary_text, title="Performance Summary", style="cyan", expand=False))
     console.print()
 
+    # --- 期間別比較 ---
+    _show_period_comparison(console, trades)
+
     # --- Edge Indicator ---
     _show_edge_indicator(console, trades)
 
     # --- Entry Price 帯別成績 ---
     _add_group_table(console, "Entry Price Band Breakdown", by_entry_price_band(trades))
+
+    # --- 帯別 best / worst ---
+    _show_band_best_worst(console, trades)
 
     # --- マーケット別成績 ---
     _add_group_table(console, "Market Breakdown", by_market(trades))
@@ -283,6 +396,9 @@ def show_report(
     )
     console.print(Panel(recent_text, title="Recent 20 Trades", style="blue", expand=False))
     console.print()
+
+    # --- 警告表示 ---
+    _show_warnings(console, trades)
 
     # --- 取引一覧テーブル ---
     table = Table(title="Paper Trades (全件)", show_lines=False, padding=(0, 1))
@@ -328,20 +444,33 @@ def show_report(
     # --- v2 Readiness Check (常に全データから判定) ---
     _show_readiness_check(console, all_trades_unfiltered)
 
-    # --- 判断基準 ---
+    # --- Live移行不可理由（1文） ---
+    block = live_block_reason(all_trades_unfiltered)
+    if block:
+        console.print(Panel(
+            f"[bold red]{block}[/bold red]",
+            style="red",
+            expand=False,
+        ))
+    else:
+        console.print(Panel(
+            "[bold green]全条件クリア。Live移行を検討できます。[/bold green]",
+            style="green",
+            expand=False,
+        ))
+    console.print()
+
+    # --- 日次チェックリスト ---
     console.print(
         Panel(
-            "[bold]v2_binary 検証完了条件:[/bold]\n\n"
-            "  [bold cyan]1.[/bold cyan] v2_binary で [bold]100トレード以上[/bold] を蓄積\n"
-            "  [bold cyan]2.[/bold cyan] 実績勝率が entry_price 期待勝率を [bold]上回る[/bold] (edge > 0)\n"
-            "  [bold cyan]3.[/bold cyan] Profit Factor > [bold]1.0[/bold]\n"
-            "  [bold cyan]4.[/bold cyan] [bold]2+ マーケット[/bold] で個別に edge > 0\n\n"
-            "[bold]全条件クリアで案2 (edge パラメータ) へ移行可能。[/bold]\n\n"
-            "[dim]案2では edge=0.03~0.05 の勝率上乗せパラメータを導入し、\n"
-            "シグナルの質を定量的にモデリングします。\n"
-            "edge=0 にすれば帰無仮説テスト（シグナル無効の検証）も可能。[/dim]",
-            title="v2 Binary Model 検証ガイド",
-            style="yellow",
+            "[bold]毎日確認すべき5項目:[/bold]\n\n"
+            "  [bold cyan]1.[/bold cyan] [bold]Edge[/bold]         実績勝率 > 期待勝率か？ (edge > 0pp)\n"
+            "  [bold cyan]2.[/bold cyan] [bold]直近24h PnL[/bold]  今日の損益はプラスか？ 急変はないか？\n"
+            "  [bold cyan]3.[/bold cyan] [bold]Warnings[/bold]     マイナスedgeの帯・マーケットが増えていないか？\n"
+            "  [bold cyan]4.[/bold cyan] [bold]Profit Factor[/bold] PF > 1.0 を維持しているか？\n"
+            "  [bold cyan]5.[/bold cyan] [bold]Drawdown[/bold]     最大DDが投入資金の20%を超えていないか？",
+            title="Daily Checklist",
+            style="blue",
             expand=False,
         )
     )
@@ -389,6 +518,12 @@ def export_csv(trades: list[dict], signals_data: list[dict] | None, path: str = 
             writer.writerow([name] + [f"{k}={v}" for k, v in stats.items()])
         writer.writerow([])
 
+        # Band Best / Worst
+        writer.writerow(["=== Band Best / Worst ==="])
+        for name, data in band_best_worst(trades).items():
+            writer.writerow([name] + [f"{k}={v}" for k, v in data.items()])
+        writer.writerow([])
+
         # マーケット別
         writer.writerow(["=== Market Breakdown ==="])
         for name, stats in by_market(trades).items():
@@ -401,6 +536,20 @@ def export_csv(trades: list[dict], signals_data: list[dict] | None, path: str = 
             writer.writerow([name] + [f"{k}={v}" for k, v in stats.items()])
         writer.writerow([])
 
+        # Warnings
+        warns = detect_warnings(trades)
+        if warns:
+            writer.writerow(["=== Warnings ==="])
+            for w in warns:
+                writer.writerow([w])
+            writer.writerow([])
+
+        # Live block reason
+        block = live_block_reason(trades)
+        writer.writerow(["=== Live Status ==="])
+        writer.writerow([block if block else "Live移行可能"])
+        writer.writerow([])
+
         # 取引詳細
         writer.writerow(["=== Trade Details ==="])
         if trades:
@@ -411,9 +560,63 @@ def export_csv(trades: list[dict], signals_data: list[dict] | None, path: str = 
     print(f"レポートをCSV出力しました: {path}")
 
 
+def save_daily_report(trades: list[dict], signals_data: list[dict] | None) -> str:
+    """日次レポートを reports/ ディレクトリに保存する。"""
+    reports_dir = Path("reports")
+    reports_dir.mkdir(exist_ok=True)
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    csv_path = reports_dir / f"report_{today}.csv"
+    json_path = reports_dir / f"report_{today}.json"
+
+    # CSV保存
+    export_csv(trades, signals_data, str(csv_path))
+
+    # JSON保存
+    summary = compute_summary(trades)
+    edge = compute_edge_indicator(trades)
+    readiness = check_v2_readiness(trades)
+    output = {
+        "date": today,
+        "summary": summary,
+        "avg_entry_price": avg_entry_price(trades),
+        "edge_indicator": edge,
+        "v2_readiness": readiness,
+        "warnings": detect_warnings(trades),
+        "live_block_reason": live_block_reason(trades),
+        "by_entry_price_band": by_entry_price_band(trades),
+        "by_market": by_market(trades),
+        "by_direction": by_direction(trades),
+        "by_hour": by_hour(trades),
+        "band_best_worst": band_best_worst(trades),
+    }
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False, default=str)
+
+    print(f"日次レポート保存: {csv_path}, {json_path}")
+    return str(csv_path)
+
+
+def _parse_period(period_str: str) -> tuple[int | None, int | None, str]:
+    """'24h' or '7d' をパースして (hours, days, label) を返す。"""
+    if not period_str:
+        return None, None, ""
+    s = period_str.strip().lower()
+    if s.endswith("h"):
+        hours = int(s[:-1])
+        return hours, None, f"直近{hours}時間"
+    elif s.endswith("d"):
+        days = int(s[:-1])
+        return None, days, f"直近{days}日"
+    else:
+        return None, None, ""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Paper Trading Performance Report")
     parser.add_argument("--v2-only", action="store_true", help="v2_binary のみ集計")
+    parser.add_argument("--period", default="", help="期間フィルタ (例: 24h, 7d)")
+    parser.add_argument("--daily", action="store_true", help="日次レポートを reports/ に保存")
     parser.add_argument("--csv", action="store_true", help="CSVにもエクスポート")
     parser.add_argument("--json", action="store_true", help="JSONで出力")
     parser.add_argument("--equity-csv", action="store_true", help="Equity curveをCSV出力")
@@ -427,17 +630,26 @@ def main() -> None:
     # v2フィルタ
     filtered = filter_by_model(trades, "v2_binary") if args.v2_only else trades
 
+    # 期間フィルタ
+    hours, days, period_label = _parse_period(args.period)
+    if hours is not None or days is not None:
+        filtered = filter_by_period(filtered, hours=hours, days=days)
+
     if args.json:
         summary = compute_summary(filtered)
         edge = compute_edge_indicator(filtered)
         readiness = check_v2_readiness(trades)  # 全データから判定
         output = {
             "filter": "v2_binary" if args.v2_only else "all",
+            "period": period_label or "all",
             "summary": summary,
             "avg_entry_price": avg_entry_price(filtered),
             "edge_indicator": edge,
             "v2_readiness": readiness,
+            "warnings": detect_warnings(filtered),
+            "live_block_reason": live_block_reason(trades),
             "by_entry_price_band": by_entry_price_band(filtered),
+            "band_best_worst": band_best_worst(filtered),
             "by_market": by_market(filtered),
             "by_direction": by_direction(filtered),
             "by_hour": by_hour(filtered),
@@ -450,13 +662,21 @@ def main() -> None:
         return
 
     console = Console()
-    show_report(trades, signals_data, console, v2_only=args.v2_only)
+    show_report(trades, signals_data, console, v2_only=args.v2_only, period_label=period_label)
+
+    # --v2-only の場合は自動的に paper_report_v2.csv に保存
+    if args.v2_only and filtered:
+        export_csv(filtered, signals_data, "paper_report_v2.csv")
 
     if args.csv:
-        export_csv(filtered, signals_data)
+        csv_name = "paper_report_v2.csv" if args.v2_only else "paper_report.csv"
+        export_csv(filtered, signals_data, csv_name)
 
     if args.equity_csv:
         export_equity_csv(filtered)
+
+    if args.daily:
+        save_daily_report(filtered, signals_data)
 
 
 if __name__ == "__main__":
