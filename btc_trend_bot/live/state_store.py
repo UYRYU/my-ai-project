@@ -18,8 +18,15 @@ class StateStore:
 
     def __init__(self, filepath: str = "data/paper_state.json") -> None:
         self.filepath = Path(filepath)
+        # If relative path, resolve relative to btc_trend_bot package directory
+        if not self.filepath.is_absolute():
+            package_dir = Path(__file__).resolve().parent.parent
+            self.filepath = package_dir / self.filepath
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
         self._state: dict = self._load()
+        # Always write initial state to disk so the file exists
+        if not self.filepath.exists():
+            self.save()
 
     # ------------------------------------------------------------------
     # Internal
@@ -44,6 +51,9 @@ class StateStore:
     def _empty_state() -> dict:
         """Return a blank state structure."""
         return {
+            "equity": 10000,
+            "open_position": None,
+            "trade_history": [],
             "trades": [],
             "equity_history": [],
             "meta": {},
@@ -55,6 +65,13 @@ class StateStore:
 
     def save(self) -> None:
         """Persist current state to disk."""
+        # Sync top-level summary fields
+        self._state["equity"] = self._state.get("meta", {}).get("capital", self._state.get("equity", 10000))
+        positions_data = self._state.get("meta", {}).get("positions", {})
+        open_positions = positions_data.get("positions", []) if isinstance(positions_data, dict) else []
+        self._state["open_position"] = open_positions[0] if open_positions else None
+        self._state["trade_history"] = self._state.get("trades", [])
+
         try:
             tmp_path = self.filepath.with_suffix(".tmp")
             with open(tmp_path, "w", encoding="utf-8") as fh:
