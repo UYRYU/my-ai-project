@@ -47,7 +47,7 @@ class WalletTracker:
             kill_switch_env=config.kill_switch,
         )
 
-        paper_broker = PaperBroker()
+        paper_broker = PaperBroker(use_legacy=config.legacy_paper_model)
         live_broker = None
         if trading_mode == TradingMode.LIVE:
             live_broker = LiveBroker(
@@ -57,7 +57,8 @@ class WalletTracker:
                 api_passphrase=config.poly_api_passphrase,
             )
 
-        csv_writer = CsvWriter("paper_trades.csv") if trading_mode == TradingMode.PAPER else None
+        csv_filename = "paper_trades_v1.csv" if config.legacy_paper_model else "paper_trades_v2.csv"
+        csv_writer = CsvWriter(csv_filename) if trading_mode == TradingMode.PAPER else None
 
         self.executor = Executor(
             mode=trading_mode,

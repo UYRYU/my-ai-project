@@ -1,13 +1,18 @@
 """src/analytics.py のテスト。"""
 
 from src.analytics import (
+    avg_entry_price,
     build_equity_curve,
     by_direction,
+    by_entry_price_band,
     by_hour,
     by_market,
     by_signal_strength,
+    check_v2_readiness,
+    compute_edge_indicator,
     compute_max_drawdown,
     compute_summary,
+    filter_by_model,
     recent_n,
 )
 
@@ -21,6 +26,7 @@ def _make_trades() -> list[dict]:
             "direction": "Buy-Yes", "entry_price": 0.60,
             "entry_amount_usd": 50.0, "exit_price": 0.70,
             "pnl_usd": 8.33, "holding_minutes": 30.0, "result": "win",
+            "model_version": "v2_binary",
         },
         {
             "trade_id": "t2", "signal_time": "2024-01-01T14:00:00Z",
@@ -28,6 +34,7 @@ def _make_trades() -> list[dict]:
             "direction": "Buy-Yes", "entry_price": 0.65,
             "entry_amount_usd": 50.0, "exit_price": 0.55,
             "pnl_usd": -7.69, "holding_minutes": 45.0, "result": "loss",
+            "model_version": "v2_binary",
         },
         {
             "trade_id": "t3", "signal_time": "2024-01-02T10:30:00Z",
@@ -35,6 +42,7 @@ def _make_trades() -> list[dict]:
             "direction": "Sell-No", "entry_price": 0.40,
             "entry_amount_usd": 50.0, "exit_price": 0.30,
             "pnl_usd": 12.50, "holding_minutes": 60.0, "result": "win",
+            "model_version": "v2_binary",
         },
         {
             "trade_id": "t4", "signal_time": "2024-01-02T14:15:00Z",
@@ -42,6 +50,7 @@ def _make_trades() -> list[dict]:
             "direction": "Sell-No", "entry_price": 0.45,
             "entry_amount_usd": 50.0, "exit_price": 0.50,
             "pnl_usd": -5.56, "holding_minutes": 20.0, "result": "loss",
+            "model_version": "v2_binary",
         },
     ]
 
@@ -146,3 +155,132 @@ def test_recent_n():
 def test_recent_n_empty():
     result = recent_n([], 20)
     assert result["count"] == 0
+
+
+# ── 新規テスト ────────────────────────────────────────────
+
+def test_filter_by_model():
+    trades = _make_trades()
+    # v1 を1件追加
+    trades.append({
+        "trade_id": "t5", "signal_time": "2024-01-03T10:00:00Z",
+        "market_id": "m1", "market_title": "Market A",
+        "direction": "Buy-Yes", "entry_price": 0.50,
+        "entry_amount_usd": 50.0, "exit_price": 0.60,
+        "pnl_usd": 10.0, "holding_minutes": 15.0, "result": "win",
+        "model_version": "v1_random",
+    })
+    v2 = filter_by_model(trades, "v2_binary")
+    assert len(v2) == 4
+    v1 = filter_by_model(trades, "v1_random")
+    assert len(v1) == 1
+
+
+def test_avg_entry_price():
+    trades = _make_trades()
+    avg = avg_entry_price(trades)
+    expected = (0.60 + 0.65 + 0.40 + 0.45) / 4
+    assert avg == round(expected, 4)
+
+
+def test_avg_entry_price_empty():
+    assert avg_entry_price([]) == 0.0
+
+
+def test_by_entry_price_band():
+    trades = _make_trades()
+    result = by_entry_price_band(trades)
+    # 0.40, 0.45 → "0.40-0.60" band
+    # 0.60, 0.65 → "0.60-0.80" band
+    assert "0.40-0.60" in result
+    assert "0.60-0.80" in result
+    assert result["0.40-0.60"]["count"] == 2
+    assert result["0.60-0.80"]["count"] == 2
+
+
+def test_by_entry_price_band_various():
+    trades = [
+        {"entry_price": 0.10, "pnl_usd": 5.0, "result": "win", "direction": "Buy-Yes"},
+        {"entry_price": 0.30, "pnl_usd": -3.0, "result": "loss", "direction": "Buy-Yes"},
+        {"entry_price": 0.90, "pnl_usd": 2.0, "result": "win", "direction": "Buy-Yes"},
+    ]
+    result = by_entry_price_band(trades)
+    assert "0.00-0.20" in result
+    assert result["0.00-0.20"]["count"] == 1
+    assert "0.80-1.00" in result
+    assert result["0.80-1.00"]["count"] == 1
+
+
+def test_compute_edge_indicator_buy():
+    """Buy のみ: 実績勝率 vs entry_price 平均。"""
+    # 2勝2敗、entry_price平均 = 0.625 → 期待勝率 62.5%、実績 50%
+    trades = [
+        {"entry_price": 0.60, "result": "win", "direction": "Buy-Yes"},
+        {"entry_price": 0.65, "result": "loss", "direction": "Buy-Yes"},
+        {"entry_price": 0.60, "result": "win", "direction": "Buy-Yes"},
+        {"entry_price": 0.65, "result": "loss", "direction": "Buy-Yes"},
+    ]
+    edge = compute_edge_indicator(trades)
+    assert edge["count"] == 4
+    assert edge["actual_win_rate"] == 50.0
+    assert edge["expected_win_rate"] == 62.5
+    assert edge["edge_pct"] == -12.5
+    assert edge["has_edge"] is False
+
+
+def test_compute_edge_indicator_sell():
+    """Sell の期待勝率は 1-entry_price。"""
+    trades = [
+        {"entry_price": 0.30, "result": "win", "direction": "Sell-No"},
+        {"entry_price": 0.30, "result": "win", "direction": "Sell-No"},
+    ]
+    edge = compute_edge_indicator(trades)
+    assert edge["actual_win_rate"] == 100.0
+    # 期待 = 1-0.30 = 0.70 → 70%
+    assert edge["expected_win_rate"] == 70.0
+    assert edge["edge_pct"] == 30.0
+    assert edge["has_edge"] is True
+
+
+def test_compute_edge_indicator_empty():
+    edge = compute_edge_indicator([])
+    assert edge["count"] == 0
+    assert edge["has_edge"] is False
+
+
+def test_compute_edge_indicator_bands():
+    """帯別edgeが正しく計算される。"""
+    trades = [
+        {"entry_price": 0.15, "result": "win", "direction": "Buy-Yes"},
+        {"entry_price": 0.55, "result": "loss", "direction": "Buy-Yes"},
+    ]
+    edge = compute_edge_indicator(trades)
+    assert "0.00-0.20" in edge["edge_per_band"]
+    assert "0.40-0.60" in edge["edge_per_band"]
+
+
+def test_check_v2_readiness_insufficient():
+    """100件未満はenough_trades=False。"""
+    trades = _make_trades()
+    result = check_v2_readiness(trades)
+    assert result["trade_count"] == 4
+    assert result["enough_trades"] is False
+    assert result["all_passed"] is False
+
+
+def test_check_v2_readiness_ignores_v1():
+    """v1データは無視される。"""
+    trades = [
+        {
+            "trade_id": f"t{i}", "signal_time": "2024-01-01T10:00:00Z",
+            "market_id": "m1", "market_title": "Market A",
+            "direction": "Buy-Yes", "entry_price": 0.50,
+            "entry_amount_usd": 50.0, "exit_price": 0.99,
+            "pnl_usd": 49.0, "holding_minutes": 30.0, "result": "win",
+            "model_version": "v1_random",
+        }
+        for i in range(200)
+    ]
+    result = check_v2_readiness(trades)
+    assert result["trade_count"] == 0  # v1 は無視
+    assert result["enough_trades"] is False

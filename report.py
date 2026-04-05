@@ -1,10 +1,11 @@
 """Paper取引のパフォーマンスレポートを生成する。
 
 Usage:
-    python report.py              # Richターミナル表示
-    python report.py --csv        # CSVにもエクスポート
-    python report.py --json       # JSON出力
-    python report.py --equity-csv # Equity curveをCSV出力
+    python report.py                # Richターミナル表示（全モデル）
+    python report.py --v2-only      # v2_binary のみ集計
+    python report.py --csv          # CSVにもエクスポート
+    python report.py --json         # JSON出力
+    python report.py --equity-csv   # Equity curveをCSV出力
 """
 
 import argparse
@@ -13,7 +14,6 @@ import csv
 import json
 import os
 import sys
-from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console
@@ -22,12 +22,17 @@ from rich.table import Table
 from rich.text import Text
 
 from src.analytics import (
+    avg_entry_price,
     build_equity_curve,
     by_direction,
+    by_entry_price_band,
     by_hour,
     by_market,
     by_signal_strength,
+    check_v2_readiness,
+    compute_edge_indicator,
     compute_summary,
+    filter_by_model,
     recent_n,
 )
 
@@ -108,13 +113,101 @@ def _add_group_table(console: Console, title: str, data: dict[str, dict]) -> Non
     console.print()
 
 
-def show_report(trades: list[dict], signals_data: list[dict] | None, console: Console) -> None:
+def _show_edge_indicator(console: Console, trades: list[dict]) -> None:
+    """Edge 指標パネルを表示する。"""
+    edge = compute_edge_indicator(trades)
+    if edge["count"] == 0:
+        return
+
+    edge_style = "green" if edge["has_edge"] else "red"
+    edge_text = (
+        f"[bold]実績勝率:[/bold]    [{edge_style}]{edge['actual_win_rate']}%[/{edge_style}]\n"
+        f"[bold]期待勝率:[/bold]    {edge['expected_win_rate']}%  "
+        f"[dim](entry_price加重平均)[/dim]\n"
+        f"[bold]Edge:[/bold]         [{edge_style}]{edge['edge_pct']:+.1f}pp[/{edge_style}]  "
+    )
+    if edge["has_edge"]:
+        edge_text += "[green bold]POSITIVE - シグナルにエッジあり[/green bold]"
+    else:
+        edge_text += "[red]NEGATIVE - シグナルのエッジ未確認[/red]"
+
+    console.print(Panel(edge_text, title="Edge Indicator (勝率 vs 期待値)", style="cyan", expand=False))
+
+    # 帯別 edge テーブル
+    if edge["edge_per_band"]:
+        table = Table(title="Entry Price Band Edge", show_lines=False, padding=(0, 1))
+        table.add_column("Band", width=10)
+        table.add_column("Count", justify="right", width=6)
+        table.add_column("実績勝率", justify="right", width=10)
+        table.add_column("期待勝率", justify="right", width=10)
+        table.add_column("Edge", justify="right", width=10)
+
+        for band, data in edge["edge_per_band"].items():
+            e_style = "green" if data["edge_pct"] > 0 else "red"
+            table.add_row(
+                band,
+                str(data["count"]),
+                f"{data['actual_win_rate']}%",
+                f"{data['expected_win_rate']}%",
+                Text(f"{data['edge_pct']:+.1f}pp", style=e_style),
+            )
+        console.print(table)
+    console.print()
+
+
+def _show_readiness_check(console: Console, all_trades: list[dict]) -> None:
+    """v2 検証完了チェックパネルを表示する。"""
+    ready = check_v2_readiness(all_trades)
+
+    lines = [f"[bold]v2_binary トレード数: {ready['trade_count']}[/bold]\n"]
+
+    for check in ready["checks"]:
+        icon = "[green]PASS[/green]" if check["passed"] else "[red]FAIL[/red]"
+        lines.append(f"  {icon}  {check['name']}  [dim]({check['value']})[/dim]")
+
+    lines.append("")
+    if ready["all_passed"]:
+        lines.append(
+            "[green bold]>>> 全条件クリア！案2 (edge パラメータ) へ進む準備ができています。 <<<[/green bold]"
+        )
+    elif ready["enough_trades"]:
+        lines.append(
+            "[yellow]100トレード到達済み。上記の未通過条件を確認してください。[/yellow]"
+        )
+    else:
+        remaining = 100 - ready["trade_count"]
+        lines.append(
+            f"[dim]あと {remaining} トレードで100件到達。検証を継続してください。[/dim]"
+        )
+
+    border_style = "green" if ready["all_passed"] else "yellow"
+    console.print(Panel(
+        "\n".join(lines),
+        title="v2 Binary Model - 案2(edge)移行判定",
+        style=border_style,
+        expand=False,
+    ))
+    console.print()
+
+
+def show_report(
+    trades: list[dict],
+    signals_data: list[dict] | None,
+    console: Console,
+    v2_only: bool = False,
+) -> None:
     """Richでレポートを表示する。"""
     console.print()
 
+    # --- v2フィルタ ---
+    all_trades_unfiltered = trades
+    if v2_only:
+        trades = filter_by_model(trades, "v2_binary")
+
     # --- ヘッダー ---
+    filter_label = " [v2_binary ONLY]" if v2_only else ""
     banner = Text()
-    banner.append("  Paper Trading Performance Report  ", style="bold white on magenta")
+    banner.append(f"  Paper Trading Performance Report{filter_label}  ", style="bold white on magenta")
     console.print(Panel(banner, style="magenta", expand=False))
     console.print()
 
@@ -123,6 +216,10 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
 
     if summary["count"] == 0:
         console.print("  [yellow]Paper取引データがありません。[/yellow]")
+        if v2_only:
+            v1_count = len(filter_by_model(all_trades_unfiltered, "v1_random"))
+            if v1_count:
+                console.print(f"  [dim]v1_random のデータは {v1_count} 件あります。--v2-only を外すと表示されます。[/dim]")
         console.print("  python main.py でトラッカーを起動してデータを蓄積してください。")
         return
 
@@ -132,7 +229,8 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
 
     pnl_style = "green" if summary["total_pnl"] >= 0 else "red"
     wr_style = "green" if summary["win_rate"] >= 50 else "red"
-    pf_str = f"{summary['profit_factor']}" if summary["profit_factor"] != float("inf") else "∞"
+    pf_str = f"{summary['profit_factor']}" if summary["profit_factor"] != float("inf") else "INF"
+    avg_ep = avg_entry_price(trades)
 
     summary_text = (
         f"[bold]モデル:[/bold]          [magenta]{model_label}[/magenta]\n"
@@ -141,6 +239,7 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
         f"[green]{summary['wins']}W[/green] / "
         f"[red]{summary['losses']}L[/red]\n"
         f"[bold]勝率:[/bold]            [{wr_style}]{summary['win_rate']}%[/{wr_style}]\n"
+        f"[bold]平均 entry_price:[/bold] {avg_ep:.4f}\n"
         f"[bold]平均利益:[/bold]        [green]${summary['avg_win']:+.2f}[/green]\n"
         f"[bold]平均損失:[/bold]        [red]${summary['avg_loss']:+.2f}[/red]\n"
         f"[bold]総損益:[/bold]          [{pnl_style}]${summary['total_pnl']:+.2f}[/{pnl_style}]\n"
@@ -154,19 +253,25 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
     console.print(Panel(summary_text, title="Performance Summary", style="cyan", expand=False))
     console.print()
 
-    # --- 1. マーケット別成績 ---
+    # --- Edge Indicator ---
+    _show_edge_indicator(console, trades)
+
+    # --- Entry Price 帯別成績 ---
+    _add_group_table(console, "Entry Price Band Breakdown", by_entry_price_band(trades))
+
+    # --- マーケット別成績 ---
     _add_group_table(console, "Market Breakdown", by_market(trades))
 
-    # --- 2. 時間帯別成績 ---
+    # --- 時間帯別成績 ---
     _add_group_table(console, "Hour Breakdown (UTC)", by_hour(trades))
 
-    # --- 3. シグナル強度別成績 ---
+    # --- シグナル強度別成績 ---
     _add_group_table(console, "Signal Strength Breakdown", by_signal_strength(trades, signals_data))
 
-    # --- 4. Direction別成績 ---
+    # --- Direction別成績 ---
     _add_group_table(console, "Direction Breakdown", by_direction(trades))
 
-    # --- 5. 直近20トレード成績 ---
+    # --- 直近20トレード成績 ---
     recent = recent_n(trades, 20)
     recent_wr_style = "green" if recent["win_rate"] >= 50 else "red"
     recent_pnl_style = "green" if recent["total_pnl"] >= 0 else "red"
@@ -220,20 +325,22 @@ def show_report(trades: list[dict], signals_data: list[dict] | None, console: Co
     console.print(table)
     console.print()
 
+    # --- v2 Readiness Check (常に全データから判定) ---
+    _show_readiness_check(console, all_trades_unfiltered)
+
     # --- 判断基準 ---
     console.print(
         Panel(
-            "[bold]Paper検証の合格基準（推奨）:[/bold]\n\n"
-            "  1. 最低50トレード以上を蓄積\n"
-            "  2. 勝率 50% 以上\n"
-            "  3. 総損益がプラス\n"
-            "  4. 最大連敗 5回以下\n"
-            "  5. avg_win / |avg_loss| > 1.0 (リスクリワード比)\n"
-            "  6. 異なる時間帯・マーケットで安定\n"
-            "  7. 最大ドローダウン < 投入資金の20%\n"
-            "  8. Profit Factor > 1.2\n\n"
-            "[dim]全基準を満たすまでは live に移行しないでください。[/dim]",
-            title="Live移行判断基準",
+            "[bold]v2_binary 検証完了条件:[/bold]\n\n"
+            "  [bold cyan]1.[/bold cyan] v2_binary で [bold]100トレード以上[/bold] を蓄積\n"
+            "  [bold cyan]2.[/bold cyan] 実績勝率が entry_price 期待勝率を [bold]上回る[/bold] (edge > 0)\n"
+            "  [bold cyan]3.[/bold cyan] Profit Factor > [bold]1.0[/bold]\n"
+            "  [bold cyan]4.[/bold cyan] [bold]2+ マーケット[/bold] で個別に edge > 0\n\n"
+            "[bold]全条件クリアで案2 (edge パラメータ) へ移行可能。[/bold]\n\n"
+            "[dim]案2では edge=0.03~0.05 の勝率上乗せパラメータを導入し、\n"
+            "シグナルの質を定量的にモデリングします。\n"
+            "edge=0 にすれば帰無仮説テスト（シグナル無効の検証）も可能。[/dim]",
+            title="v2 Binary Model 検証ガイド",
             style="yellow",
             expand=False,
         )
@@ -268,6 +375,20 @@ def export_csv(trades: list[dict], signals_data: list[dict] | None, path: str = 
             writer.writerow([key, val])
         writer.writerow([])
 
+        # Edge Indicator
+        edge = compute_edge_indicator(trades)
+        writer.writerow(["=== Edge Indicator ==="])
+        for key, val in edge.items():
+            if key != "edge_per_band":
+                writer.writerow([key, val])
+        writer.writerow([])
+
+        # Entry Price 帯別
+        writer.writerow(["=== Entry Price Band Breakdown ==="])
+        for name, stats in by_entry_price_band(trades).items():
+            writer.writerow([name] + [f"{k}={v}" for k, v in stats.items()])
+        writer.writerow([])
+
         # マーケット別
         writer.writerow(["=== Market Breakdown ==="])
         for name, stats in by_market(trades).items():
@@ -292,6 +413,7 @@ def export_csv(trades: list[dict], signals_data: list[dict] | None, path: str = 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Paper Trading Performance Report")
+    parser.add_argument("--v2-only", action="store_true", help="v2_binary のみ集計")
     parser.add_argument("--csv", action="store_true", help="CSVにもエクスポート")
     parser.add_argument("--json", action="store_true", help="JSONで出力")
     parser.add_argument("--equity-csv", action="store_true", help="Equity curveをCSV出力")
@@ -302,29 +424,39 @@ def main() -> None:
     trades, signals_data = loop.run_until_complete(load_data(args.db))
     loop.close()
 
+    # v2フィルタ
+    filtered = filter_by_model(trades, "v2_binary") if args.v2_only else trades
+
     if args.json:
-        summary = compute_summary(trades)
+        summary = compute_summary(filtered)
+        edge = compute_edge_indicator(filtered)
+        readiness = check_v2_readiness(trades)  # 全データから判定
         output = {
+            "filter": "v2_binary" if args.v2_only else "all",
             "summary": summary,
-            "by_market": by_market(trades),
-            "by_direction": by_direction(trades),
-            "by_hour": by_hour(trades),
-            "by_signal_strength": by_signal_strength(trades, signals_data),
-            "recent_20": recent_n(trades, 20),
-            "equity_curve": build_equity_curve(trades),
-            "trades": trades,
+            "avg_entry_price": avg_entry_price(filtered),
+            "edge_indicator": edge,
+            "v2_readiness": readiness,
+            "by_entry_price_band": by_entry_price_band(filtered),
+            "by_market": by_market(filtered),
+            "by_direction": by_direction(filtered),
+            "by_hour": by_hour(filtered),
+            "by_signal_strength": by_signal_strength(filtered, signals_data),
+            "recent_20": recent_n(filtered, 20),
+            "equity_curve": build_equity_curve(filtered),
+            "trades": filtered,
         }
         print(json.dumps(output, indent=2, ensure_ascii=False, default=str))
         return
 
     console = Console()
-    show_report(trades, signals_data, console)
+    show_report(trades, signals_data, console, v2_only=args.v2_only)
 
     if args.csv:
-        export_csv(trades, signals_data)
+        export_csv(filtered, signals_data)
 
     if args.equity_csv:
-        export_equity_csv(trades)
+        export_equity_csv(filtered)
 
 
 if __name__ == "__main__":

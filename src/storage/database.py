@@ -404,6 +404,18 @@ class Database:
             "worst_trade": round(worst, 2),
         }
 
+    async def get_paper_trades_by_model(self, model_version: str = "v2_binary") -> list[dict]:
+        """指定モデルのPaperTradeのみを取得する。"""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+        self._db.row_factory = aiosqlite.Row
+        cursor = await self._db.execute(
+            "SELECT * FROM paper_trades WHERE model_version = ? ORDER BY created_at ASC",
+            (model_version,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def get_recent_trades(self, limit: int = 50) -> list[dict]:
         if not self._db:
             raise RuntimeError("Database not initialized")
