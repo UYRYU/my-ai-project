@@ -62,6 +62,17 @@ class OrderResult:
     metadata: dict = field(default_factory=dict)
 
 
+class ProductType(Enum):
+    SPOT = "spot"
+    USDT_FUTURES = "USDT-FUTURES"
+    COIN_FUTURES = "COIN-FUTURES"
+
+
+class MarginMode(Enum):
+    CROSSED = "crossed"
+    ISOLATED = "isolated"
+
+
 @dataclass
 class ExchangeConfig:
     exchange_name: str = "bitget"
@@ -69,10 +80,13 @@ class ExchangeConfig:
     api_secret: str = ""
     passphrase: str = ""
     testnet: bool = True
-    maker_fee_pct: float = 0.02  # Bitget spot maker
-    taker_fee_pct: float = 0.06  # Bitget spot taker
+    maker_fee_pct: float = 0.02  # Bitget futures maker
+    taker_fee_pct: float = 0.06  # Bitget futures taker
     slippage_bps: float = 5.0  # 5 basis points
-    min_order_size_btc: float = 0.0001
+    min_order_size_btc: float = 0.001  # Futures min
     max_leverage: int = 20
     risk_per_trade_pct: float = 2.0
     base_url: str = "https://api.bitget.com"
+    product_type: str = "USDT-FUTURES"
+    margin_mode: str = "crossed"
+    default_leverage: int = 1

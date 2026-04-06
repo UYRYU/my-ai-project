@@ -23,13 +23,19 @@ exchange:
   testnet: true
   base_url: "https://api.bitget.com"
 
-  # Fee structure (Bitget spot, VIP0)
+  # Trading mode: "spot" or "futures"
+  mode: "futures"
+  product_type: "USDT-FUTURES"
+  margin_mode: "crossed"
+  default_leverage: 1
+
+  # Fee structure (Bitget USDT-M Futures, VIP0)
   maker_fee_pct: 0.02    # 0.02%
   taker_fee_pct: 0.06    # 0.06%
   slippage_bps: 5.0      # 5 basis points
 
-  # Order constraints
-  min_order_size_btc: 0.0001
+  # Order constraints (futures)
+  min_order_size_btc: 0.001
   max_leverage: 20
 
   # Risk per trade
@@ -39,12 +45,13 @@ exchange:
 # Backtest
 # -----------------------------------------------------------
 backtest:
-  initial_capital: 10000.0
-  commission_pct: 0.06    # Bitget taker fee
+  initial_capital: 100.0
+  commission_pct: 0.06    # Bitget futures taker fee
   slippage_pct: 0.05      # 5 bps
   position_size_pct: 95.0
   max_open_trades: 1
   leverage: 1
+  min_order_size: 0.001   # Bitget futures min BTC
   default_timeframe: "1h"
 
 # -----------------------------------------------------------
@@ -206,7 +213,7 @@ reports:
 paper_trading:
   symbol: "BTCUSDT"
   timeframe: "1h"
-  initial_capital: 10000.0
+  initial_capital: 100.0
   risk_per_trade_pct: 2.0
   max_drawdown_pct: 15.0
   max_daily_loss_pct: 5.0
