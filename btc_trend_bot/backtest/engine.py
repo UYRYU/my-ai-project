@@ -67,6 +67,7 @@ class BacktestEngine:
         self.position_size_pct: float = config.get("position_size_pct", 95.0)
         self.leverage: int = config.get("leverage", 1)
         self.max_open_trades: int = config.get("max_open_trades", 1)
+        self.min_order_size: float = config.get("min_order_size", 0.0)
         self._config = config
 
         logger.info(
@@ -262,6 +263,14 @@ class BacktestEngine:
             return None, 0.0
 
         size = allocation / entry_price
+
+        # Check minimum order size (e.g. Bitget min 0.0001 BTC)
+        if self.min_order_size > 0 and size < self.min_order_size:
+            logger.debug(
+                "Order size {:.8f} below minimum {:.4f}, skipping",
+                size, self.min_order_size,
+            )
+            return None, 0.0
 
         # Entry commission
         commission = allocation * (self.commission_pct / 100.0)
