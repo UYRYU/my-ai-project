@@ -39,6 +39,58 @@ COIN_CONFIGS = {
 
 ALL_SYMBOLS = list(COIN_CONFIGS.keys())
 
+# ---------------------------------------------------------------
+# Per-symbol strategy parameter overrides
+# Tuned based on each coin's price action characteristics
+# ---------------------------------------------------------------
+SYMBOL_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
+    "XRPUSDT": {
+        # XRP: win/loss ratio=1.01 is the problem, not entry quality
+        # Keep entries mostly the same, fix via exit params
+        "breakout_confirmed": {
+            "volume_mult": 1.4,       # 1.3→1.4: slightly stricter volume
+            "atr_sl_mult": 2.0,       # 2.5→2.0: tighter SL = better R:R
+        },
+        "reacceleration_quality": {
+            "adx_min": 22,            # 20→22: slightly stricter
+        },
+    },
+    "ETHUSDT": {
+        # ETH: too few signals → loosen filters to get more entries
+        "reacceleration_quality": {
+            "pre_trend_bars": 10,     # 20→10: don't require 20 bars of EMA alignment
+            "squeeze_lookback": 7,    # 5→7: wider squeeze detection window
+            "trend_strength_min": 0.3, # 0.4→0.3: accept weaker trends
+            "adx_min": 18,            # 20→18: lower threshold
+            "range_break_pct": 0.3,   # 0.5→0.3: accept smaller breaks
+        },
+        "breakout_confirmed": {
+            "adx_min": 18,            # 22→18: more entries
+            "volume_mult": 1.1,       # 1.3→1.1: less strict volume
+            "cooldown_bars": 3,       # 5→3: faster re-entry
+        },
+    },
+}
+
+# Per-symbol exit parameter overrides
+SYMBOL_EXIT_OVERRIDES: dict[str, dict] = {
+    "XRPUSDT": {
+        # XRP: bigger first TP, tighter trailing to capture more profit
+        "partial_trail": {
+            "first_tp_rr": 2.5,       # 1.5→2.5: wait for bigger move before 1st TP
+            "first_tp_pct": 40.0,     # 50→40: close less at first TP
+            "trail_atr_mult": 1.5,    # 2.0→1.5: tighter trail on remainder
+        },
+    },
+    "ETHUSDT": {
+        # ETH: slightly wider trailing to hold through volatility
+        "partial_trail": {
+            "first_tp_rr": 2.0,       # 1.5→2.0
+            "trail_atr_mult": 1.8,    # 2.0→1.8
+        },
+    },
+}
+
 # Strategies to test (best performers from BTC analysis)
 DEFAULT_STRATEGIES = [
     "multi_tf_trend_hold",
@@ -110,7 +162,10 @@ def run_single(
     higher_tf_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """Run one strategy+exit on one symbol."""
-    strat_config = config.get("strategies", {}).get(strategy_name, {})
+    # Merge base config with per-symbol overrides
+    strat_config = dict(config.get("strategies", {}).get(strategy_name, {}))
+    sym_overrides = SYMBOL_STRATEGY_OVERRIDES.get(symbol, {}).get(strategy_name, {})
+    strat_config.update(sym_overrides)
 
     # Create strategy
     if strategy_name in ("multi_tf", "multi_tf_trend_hold"):
@@ -134,9 +189,18 @@ def run_single(
             "metrics": {},
         }
 
-    # Backtest with per-coin min order size
-    exit_config = config.get("exit", {})
+    # Build exit config with per-symbol overrides
+    import copy
+    exit_config = copy.deepcopy(config.get("exit", {}))
     exit_config["method"] = exit_method
+
+    # Apply per-symbol exit overrides
+    sym_exit_overrides = SYMBOL_EXIT_OVERRIDES.get(symbol, {}).get(exit_method, {})
+    if sym_exit_overrides:
+        exit_sub = exit_config.get(exit_method, {})
+        exit_sub.update(sym_exit_overrides)
+        exit_config[exit_method] = exit_sub
+
     exit_manager = ExitManager(exit_config)
 
     bt_config = dict(config.get("backtest", {}))
