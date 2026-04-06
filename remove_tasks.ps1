@@ -1,26 +1,26 @@
-# remove_tasks.ps1 - タスクスケジューラから PolyTracker タスクを全削除する
+# remove_tasks.ps1 - Remove all PolyTracker tasks from Task Scheduler
 #
-# 使い方:
-#   PowerShell を管理者として実行し:
+# Usage:
+#   Run PowerShell as Administrator:
 #   cd C:\my-ai-project
-#   .\remove_tasks.ps1
+#   powershell -ExecutionPolicy Bypass -File remove_tasks.ps1
 
 $ErrorActionPreference = "Stop"
 
-# 管理者権限チェック
+# Admin check
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
 )
 if (-not $isAdmin) {
     Write-Host ""
-    Write-Host "[ERROR] 管理者権限が必要です。" -ForegroundColor Red
-    Write-Host "  PowerShell を右クリック → 「管理者として実行」で再度実行してください。" -ForegroundColor Yellow
+    Write-Host "[ERROR] Administrator privileges required." -ForegroundColor Red
+    Write-Host "  Right-click PowerShell -> Run as Administrator" -ForegroundColor Yellow
     Write-Host ""
     exit 1
 }
 
 Write-Host ""
-Write-Host "=== PolyTracker タスク削除 ===" -ForegroundColor Cyan
+Write-Host "=== PolyTracker - Remove Tasks ===" -ForegroundColor Cyan
 Write-Host ""
 
 $taskNames = @("PolyTracker-Watchdog", "PolyTracker-Monitor", "PolyTracker-DailyReport")
@@ -37,12 +37,12 @@ foreach ($name in $taskNames) {
             Write-Host "  FAIL: $name - $_" -ForegroundColor Red
         }
     } else {
-        Write-Host "  SKIP: $name (未登録)" -ForegroundColor Gray
+        Write-Host "  SKIP: $name (not registered)" -ForegroundColor Gray
     }
 }
 
 Write-Host ""
-Write-Host "削除完了: $removed 件" -ForegroundColor Cyan
+Write-Host "Removed: $removed task(s)" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "再登録するには: .\setup_tasks.ps1" -ForegroundColor Gray
+Write-Host "To re-register: powershell -ExecutionPolicy Bypass -File setup_tasks.ps1" -ForegroundColor Gray
 Write-Host ""

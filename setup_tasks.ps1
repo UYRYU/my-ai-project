@@ -1,46 +1,46 @@
-# setup_tasks.ps1 - Windows タスクスケジューラに自動化タスクを登録する
+# setup_tasks.ps1 - Register PolyTracker tasks in Windows Task Scheduler
 #
-# 使い方:
-#   PowerShell を管理者として実行し:
+# Usage:
+#   Run PowerShell as Administrator:
 #   cd C:\my-ai-project
-#   .\setup_tasks.ps1
+#   powershell -ExecutionPolicy Bypass -File setup_tasks.ps1
 #
-# 登録されるタスク:
-#   1. PolyTracker-Watchdog    : ログオン時に watchdog.py を自動起動
-#   2. PolyTracker-Monitor     : ログオン時に起動 + 10分間隔でリピート実行
-#   3. PolyTracker-DailyReport : 毎日 21:00 に report.py --v2-only --daily を実行
+# Tasks:
+#   1. PolyTracker-Watchdog    : At logon, auto-start watchdog.py
+#   2. PolyTracker-Monitor     : At logon + repeat every 10 min
+#   3. PolyTracker-DailyReport : Daily at 21:00
 
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PythonExe = Join-Path $ProjectDir "venv\Scripts\python.exe"
 
-# venvのpythonが見つからない場合はシステムのpythonを使用
+# Fallback: try pythonw.exe, then system python
 if (-not (Test-Path $PythonExe)) {
     $PythonExe = Join-Path $ProjectDir "venv\Scripts\pythonw.exe"
 }
 if (-not (Test-Path $PythonExe)) {
     $PythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
     if (-not $PythonExe) {
-        Write-Host "[ERROR] Python が見つかりません。venv を作成するか、Python を PATH に追加してください。" -ForegroundColor Red
+        Write-Host "[ERROR] Python not found. Create venv or add Python to PATH." -ForegroundColor Red
         exit 1
     }
 }
 
-# 管理者権限チェック
+# Admin check
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
 )
 if (-not $isAdmin) {
     Write-Host ""
-    Write-Host "[ERROR] 管理者権限が必要です。" -ForegroundColor Red
-    Write-Host "  PowerShell を右クリック → 「管理者として実行」で再度実行してください。" -ForegroundColor Yellow
+    Write-Host "[ERROR] Administrator privileges required." -ForegroundColor Red
+    Write-Host "  Right-click PowerShell -> Run as Administrator" -ForegroundColor Yellow
     Write-Host ""
     exit 1
 }
 
 Write-Host ""
-Write-Host "=== Polymarket Tracker - タスクスケジューラ セットアップ ===" -ForegroundColor Cyan
+Write-Host "=== PolyTracker - Task Scheduler Setup ===" -ForegroundColor Cyan
 Write-Host "Python : $PythonExe" -ForegroundColor Gray
 Write-Host "Project: $ProjectDir" -ForegroundColor Gray
 Write-Host ""
@@ -48,8 +48,8 @@ Write-Host ""
 $successCount = 0
 $totalTasks = 3
 
-# --- タスク1: Watchdog (ログオン時) ---
-Write-Host "[1/$totalTasks] PolyTracker-Watchdog (ログオン時に自動起動)..." -ForegroundColor Yellow
+# --- Task 1: Watchdog (at logon) ---
+Write-Host "[1/$totalTasks] PolyTracker-Watchdog (at logon)..." -ForegroundColor Yellow
 
 $WatchdogAction = New-ScheduledTaskAction `
     -Execute $PythonExe `
@@ -72,16 +72,16 @@ try {
         -Action $WatchdogAction `
         -Trigger $WatchdogTrigger `
         -Settings $WatchdogSettings `
-        -Description "Polymarket Tracker の watchdog.py を自動起動。クラッシュ時は自動再起動。" | Out-Null
-    Write-Host "  OK: PolyTracker-Watchdog 登録完了" -ForegroundColor Green
+        -Description "Auto-start watchdog.py at logon. Auto-restart on crash." | Out-Null
+    Write-Host "  OK: PolyTracker-Watchdog registered" -ForegroundColor Green
     $successCount++
 } catch {
-    Write-Host "  FAIL: PolyTracker-Watchdog 登録失敗" -ForegroundColor Red
-    Write-Host "  エラー: $_" -ForegroundColor Gray
+    Write-Host "  FAIL: PolyTracker-Watchdog" -ForegroundColor Red
+    Write-Host "  Error: $_" -ForegroundColor Gray
 }
 
-# --- タスク2: Monitor (ログオン時 + 10分リピート) ---
-Write-Host "[2/$totalTasks] PolyTracker-Monitor (ログオン時 + 10分間隔リピート)..." -ForegroundColor Yellow
+# --- Task 2: Monitor (at logon + repeat every 10 min) ---
+Write-Host "[2/$totalTasks] PolyTracker-Monitor (at logon + 10min repeat)..." -ForegroundColor Yellow
 
 $MonitorAction = New-ScheduledTaskAction `
     -Execute $PythonExe `
@@ -107,16 +107,16 @@ try {
         -Action $MonitorAction `
         -Trigger $MonitorTrigger `
         -Settings $MonitorSettings `
-        -Description "10分ごとにアラートチェック + レポート保存（ログオン時開始）" | Out-Null
-    Write-Host "  OK: PolyTracker-Monitor 登録完了" -ForegroundColor Green
+        -Description "Alert check + report save every 10 min (starts at logon)" | Out-Null
+    Write-Host "  OK: PolyTracker-Monitor registered" -ForegroundColor Green
     $successCount++
 } catch {
-    Write-Host "  FAIL: PolyTracker-Monitor 登録失敗" -ForegroundColor Red
-    Write-Host "  エラー: $_" -ForegroundColor Gray
+    Write-Host "  FAIL: PolyTracker-Monitor" -ForegroundColor Red
+    Write-Host "  Error: $_" -ForegroundColor Gray
 }
 
-# --- タスク3: DailyReport (毎日 21:00) ---
-Write-Host "[3/$totalTasks] PolyTracker-DailyReport (毎日 21:00)..." -ForegroundColor Yellow
+# --- Task 3: DailyReport (daily at 21:00) ---
+Write-Host "[3/$totalTasks] PolyTracker-DailyReport (daily 21:00)..." -ForegroundColor Yellow
 
 $ReportAction = New-ScheduledTaskAction `
     -Execute $PythonExe `
@@ -137,37 +137,34 @@ try {
         -Action $ReportAction `
         -Trigger $ReportTrigger `
         -Settings $ReportSettings `
-        -Description "毎日21:00にv2レポートを reports/ に自動保存" | Out-Null
-    Write-Host "  OK: PolyTracker-DailyReport 登録完了" -ForegroundColor Green
+        -Description "Save v2 daily report to reports/ at 21:00" | Out-Null
+    Write-Host "  OK: PolyTracker-DailyReport registered" -ForegroundColor Green
     $successCount++
 } catch {
-    Write-Host "  FAIL: PolyTracker-DailyReport 登録失敗" -ForegroundColor Red
-    Write-Host "  エラー: $_" -ForegroundColor Gray
+    Write-Host "  FAIL: PolyTracker-DailyReport" -ForegroundColor Red
+    Write-Host "  Error: $_" -ForegroundColor Gray
 }
 
-# --- 結果サマリー ---
+# --- Summary ---
 Write-Host ""
 if ($successCount -eq $totalTasks) {
-    Write-Host "=== セットアップ完了 ($successCount/$totalTasks タスク登録) ===" -ForegroundColor Cyan
+    Write-Host "=== Setup complete ($successCount/$totalTasks tasks registered) ===" -ForegroundColor Cyan
 } else {
-    Write-Host "=== セットアップ完了 ($successCount/$totalTasks タスク登録) ===" -ForegroundColor Yellow
+    Write-Host "=== Setup complete ($successCount/$totalTasks tasks registered) ===" -ForegroundColor Yellow
 }
 
 Write-Host ""
-Write-Host "登録されたタスク:" -ForegroundColor White
-Write-Host "  1. PolyTracker-Watchdog    : ログオン時に watchdog.py 起動（自動再起動付き）" -ForegroundColor Gray
-Write-Host "  2. PolyTracker-Monitor     : ログオン時 + 10分間隔でアラート + レポート" -ForegroundColor Gray
-Write-Host "  3. PolyTracker-DailyReport : 毎日 21:00 にレポート保存" -ForegroundColor Gray
+Write-Host "Registered tasks:" -ForegroundColor White
+Write-Host "  1. PolyTracker-Watchdog    : at logon, auto-restart on crash" -ForegroundColor Gray
+Write-Host "  2. PolyTracker-Monitor     : at logon + every 10 min alert check" -ForegroundColor Gray
+Write-Host "  3. PolyTracker-DailyReport : daily 21:00 report save" -ForegroundColor Gray
 Write-Host ""
-Write-Host "確認コマンド:" -ForegroundColor White
+Write-Host "Verify:" -ForegroundColor White
 Write-Host "  Get-ScheduledTask -TaskName 'PolyTracker-*'" -ForegroundColor Gray
-Write-Host "  Get-ScheduledTask -TaskName 'PolyTracker-*' | Get-ScheduledTaskInfo" -ForegroundColor Gray
 Write-Host ""
-Write-Host "削除:" -ForegroundColor White
-Write-Host "  .\remove_tasks.ps1" -ForegroundColor Gray
+Write-Host "Remove all:" -ForegroundColor White
+Write-Host "  powershell -ExecutionPolicy Bypass -File remove_tasks.ps1" -ForegroundColor Gray
 Write-Host ""
-Write-Host "手動起動:" -ForegroundColor White
-Write-Host "  run_all.bat          # watchdog + monitor を同時起動" -ForegroundColor Gray
-Write-Host "  python watchdog.py   # トラッカーのみ起動" -ForegroundColor Gray
-Write-Host "  python monitor.py    # アラートチェック1回" -ForegroundColor Gray
+Write-Host "Manual start:" -ForegroundColor White
+Write-Host "  run_all.bat" -ForegroundColor Gray
 Write-Host ""
