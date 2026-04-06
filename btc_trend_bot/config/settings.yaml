@@ -50,7 +50,7 @@ backtest:
   slippage_pct: 0.05      # 5 bps
   position_size_pct: 95.0
   max_open_trades: 1
-  leverage: 1
+  leverage: 2
   min_order_size: 0.001   # Bitget futures min BTC
   default_timeframe: "1h"
 
