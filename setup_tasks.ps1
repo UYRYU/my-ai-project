@@ -91,7 +91,7 @@ $MonitorAction = New-ScheduledTaskAction `
 $MonitorTrigger = New-ScheduledTaskTrigger -AtLogon
 $MonitorTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At "00:00" `
     -RepetitionInterval (New-TimeSpan -Minutes 10) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)).Repetition
+    -RepetitionDuration (New-TimeSpan -Days 365)).Repetition
 
 $MonitorSettings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
