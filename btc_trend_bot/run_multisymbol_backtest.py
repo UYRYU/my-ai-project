@@ -56,7 +56,7 @@ SYMBOL_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
         },
     },
     "ETHUSDT": {
-        # ETH: too few signals → loosen filters to get more entries
+        # ETH: reacceleration needs loosening for more signals
         "reacceleration_quality": {
             "pre_trend_bars": 10,     # 20→10: don't require 20 bars of EMA alignment
             "squeeze_lookback": 7,    # 5→7: wider squeeze detection window
@@ -64,10 +64,11 @@ SYMBOL_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
             "adx_min": 18,            # 20→18: lower threshold
             "range_break_pct": 0.3,   # 0.5→0.3: accept smaller breaks
         },
+        # ETH breakout: tighter entry quality + tighter SL for better R:R
         "breakout_confirmed": {
-            "adx_min": 18,            # 22→18: more entries
-            "volume_mult": 1.1,       # 1.3→1.1: less strict volume
-            "cooldown_bars": 3,       # 5→3: faster re-entry
+            "volume_mult": 1.3,       # keep original - quality > quantity
+            "atr_sl_mult": 1.8,       # 2.5→1.8: tighter SL = more risk/reward
+            "cooldown_bars": 3,       # 5→3: faster re-entry OK for ETH
         },
     },
 }
@@ -83,10 +84,11 @@ SYMBOL_EXIT_OVERRIDES: dict[str, dict] = {
         },
     },
     "ETHUSDT": {
-        # ETH: slightly wider trailing to hold through volatility
+        # ETH: aggressive profit capture - bigger TP target, tight trail
         "partial_trail": {
-            "first_tp_rr": 2.0,       # 1.5→2.0
-            "trail_atr_mult": 1.8,    # 2.0→1.8
+            "first_tp_rr": 2.5,       # 1.5→2.5: wait for bigger move
+            "first_tp_pct": 40.0,     # 50→40: keep more riding
+            "trail_atr_mult": 1.3,    # 2.0→1.3: tight trail to lock profit
         },
     },
 }
