@@ -1,11 +1,12 @@
 """Monitor: 定期的にDBを確認し、アラートを発信する。
 
 機能:
-  1. 日次レポート自動保存 (report.py --v2-only --daily 相当)
+  1. 日次レポート自動保存 (reports/ に日付付き)
   2. edge <= 0 になったら Discord 通知
   3. PF < 1.0 になったら Discord 通知
   4. 100トレード到達で通知
   5. Live移行可能になったら通知
+  6. Discord 未設定でもコンソール + ログに出力（落ちない）
 
 Usage:
     python monitor.py                # 1回実行（タスクスケジューラ向け）
@@ -23,14 +24,17 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dotenv import load_dotenv
+# プロジェクトルートを確定
+PROJECT_DIR = Path(__file__).parent.resolve()
+os.chdir(PROJECT_DIR)
 
+from dotenv import load_dotenv
 load_dotenv()
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-LOG_DIR = Path("logs")
+LOG_DIR = PROJECT_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(
@@ -48,7 +52,7 @@ logging.basicConfig(
 logger = logging.getLogger("monitor")
 
 # アラート状態ファイル（同じアラートを何度も送らないため）
-ALERT_STATE_FILE = Path(".monitor_state.json")
+ALERT_STATE_FILE = PROJECT_DIR / ".monitor_state.json"
 
 
 def load_alert_state() -> dict:
@@ -67,12 +71,18 @@ def save_alert_state(state: dict) -> None:
 
 
 async def send_discord_alert(title: str, message: str, color: int = 0xFF0000) -> bool:
-    """Discord Webhook でアラートを送信する。"""
-    import httpx
-
+    """Discord Webhook でアラートを送信する。未設定なら LOCAL ログに出力。"""
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
     if not webhook_url:
-        logger.info("[ALERT-LOCAL] %s: %s", title, message)
+        # Discord 未設定 → ログ出力のみ（落ちない）
+        logger.info("[ALERT] %s | %s", title, message.replace("\n", " | "))
+        return False
+
+    try:
+        import httpx
+    except ImportError:
+        logger.warning("httpx が未インストール。Discord通知をスキップ。")
+        logger.info("[ALERT] %s | %s", title, message.replace("\n", " | "))
         return False
 
     embed = {
@@ -90,14 +100,21 @@ async def send_discord_alert(title: str, message: str, color: int = 0xFF0000) ->
             return True
     except Exception as e:
         logger.error("Discord通知失敗: %s - %s", title, e)
+        logger.info("[ALERT-FALLBACK] %s | %s", title, message.replace("\n", " | "))
         return False
 
 
 async def load_trades(db_path: str) -> list[dict]:
     """DBから全paper_tradesを読み込む。"""
-    import aiosqlite
+    db_file = Path(db_path)
+    if not db_file.exists():
+        logger.info("DB ファイルなし: %s", db_path)
+        return []
 
-    if not Path(db_path).exists():
+    try:
+        import aiosqlite
+    except ImportError:
+        logger.error("aiosqlite が未インストール。pip install aiosqlite")
         return []
 
     db = await aiosqlite.connect(db_path)
@@ -128,10 +145,10 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
     v2_trades = filter_by_model(trades, "v2_binary")
     n = len(v2_trades)
 
-    logger.info("v2_binary トレード数: %d", n)
+    logger.info("v2_binary トレード数: %d (全体: %d)", n, len(trades))
 
     if n == 0:
-        logger.info("v2トレードなし。スキップ。")
+        logger.info("v2 トレードなし。スキップ。")
         return
 
     summary = compute_summary(v2_trades)
@@ -147,7 +164,7 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
         alert_key = f"edge_negative_{today}"
         if alert_key not in state:
             await send_discord_alert(
-                "Edge Alert: シグナルのエッジがマイナス",
+                "Edge Alert: エッジがマイナス",
                 f"実績勝率: {edge['actual_win_rate']}%\n"
                 f"期待勝率: {edge['expected_win_rate']}%\n"
                 f"Edge: {edge['edge_pct']:+.1f}pp\n"
@@ -164,10 +181,10 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
         if alert_key not in state:
             await send_discord_alert(
                 "PF Alert: Profit Factor < 1.0",
-                f"Profit Factor: {pf}\n"
+                f"PF: {pf}\n"
                 f"総損益: ${summary['total_pnl']:+.2f}\n"
                 f"勝率: {summary['win_rate']}%\n"
-                f"トレード数: {n}",
+                f"n={n}",
                 color=0xFF8800,
             )
             state[alert_key] = True
@@ -178,12 +195,10 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
         alert_key = "milestone_100"
         if alert_key not in state:
             await send_discord_alert(
-                "Milestone: v2_binary 100トレード到達！",
-                f"トレード数: {n}\n"
-                f"勝率: {summary['win_rate']}%\n"
-                f"総損益: ${summary['total_pnl']:+.2f}\n"
-                f"Edge: {edge['edge_pct']:+.1f}pp\n"
-                f"PF: {pf}",
+                "Milestone: 100トレード到達！",
+                f"n={n}, 勝率={summary['win_rate']}%\n"
+                f"PnL=${summary['total_pnl']:+.2f}\n"
+                f"Edge={edge['edge_pct']:+.1f}pp, PF={pf}",
                 color=0x00FF00,
             )
             state[alert_key] = True
@@ -195,11 +210,9 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
         if alert_key not in state:
             await send_discord_alert(
                 "LIVE READY: 全条件クリア！",
-                "v2_binary の検証が全条件を満たしました。\n"
-                f"トレード数: {readiness['trade_count']}\n"
-                f"Edge: {edge['edge_pct']:+.1f}pp\n"
-                f"PF: {pf}\n\n"
-                "案2 (edge パラメータ) への移行を検討してください。",
+                f"n={readiness['trade_count']}\n"
+                f"Edge={edge['edge_pct']:+.1f}pp, PF={pf}\n"
+                "案2 (edge) への移行を検討可。",
                 color=0x00FF00,
             )
             state[alert_key] = True
@@ -210,11 +223,15 @@ async def run_checks(db_path: str, save_report: bool = True) -> None:
     if alerts_sent:
         logger.info("アラート送信: %s", ", ".join(alerts_sent))
     else:
-        logger.info("アラートなし。(edge=%.1fpp, PF=%.2f, n=%d)", edge["edge_pct"], pf, n)
+        logger.info("異常なし (edge=%+.1fpp, PF=%.2f, n=%d)",
+                     edge["edge_pct"], pf, n)
 
     # --- 日次レポート保存 ---
     if save_report:
         try:
+            reports_dir = PROJECT_DIR / "reports"
+            reports_dir.mkdir(exist_ok=True)
+
             from report import export_csv, save_daily_report
             save_daily_report(v2_trades, None)
             export_csv(v2_trades, None, "paper_report_v2.csv")
@@ -233,25 +250,36 @@ def main() -> None:
                         help="DBパス")
     args = parser.parse_args()
 
+    logger.info("========================================")
+    logger.info("Monitor 開始 (DB: %s)", args.db)
+    logger.info("  Discord: %s", "有効" if os.getenv("DISCORD_WEBHOOK_URL") else "無効（ログ出力のみ）")
+    logger.info("  モード: %s", f"ループ({args.loop}秒)" if args.loop > 0 else "1回実行")
+    logger.info("========================================")
+
     loop = asyncio.new_event_loop()
 
     if args.loop > 0:
-        logger.info("=== Monitor ループ開始 (間隔: %d秒) ===", args.loop)
         try:
             while True:
-                loop.run_until_complete(
-                    run_checks(args.db, save_report=not args.check_only)
-                )
+                try:
+                    loop.run_until_complete(
+                        run_checks(args.db, save_report=not args.check_only)
+                    )
+                except Exception as e:
+                    logger.error("チェック中にエラー: %s", e)
                 time.sleep(args.loop)
         except KeyboardInterrupt:
             logger.info("Monitor 停止。")
     else:
-        logger.info("=== Monitor 1回実行 ===")
-        loop.run_until_complete(
-            run_checks(args.db, save_report=not args.check_only)
-        )
+        try:
+            loop.run_until_complete(
+                run_checks(args.db, save_report=not args.check_only)
+            )
+        except Exception as e:
+            logger.error("チェック中にエラー: %s", e)
 
     loop.close()
+    logger.info("=== Monitor 終了 ===")
 
 
 if __name__ == "__main__":
