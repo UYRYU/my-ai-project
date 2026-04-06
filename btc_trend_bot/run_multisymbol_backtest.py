@@ -227,6 +227,110 @@ def run_single(
         "expectancy": m.get("expectancy", 0),
         "avg_win_loss_ratio": m.get("avg_win_loss_ratio", 0),
         "metrics": m,
+        "equity_curve": result.equity_curve,
+        "trades_df": result.trades,
+    }
+
+
+BEST_STRATEGY_PER_SYMBOL: dict[str, tuple[str, str]] = {
+    "BTCUSDT":  ("breakout_confirmed",      "partial_trail"),
+    "ETHUSDT":  ("breakout_confirmed",       "partial_trail"),
+    "XRPUSDT":  ("breakout_confirmed",       "partial_trail"),
+    "DOGEUSDT": ("multi_tf_trend_hold",      "partial_trail"),
+    "SOLUSDT":  ("breakout_confirmed",       "partial_trail"),
+}
+
+
+def run_portfolio_simulation(
+    all_results: list[dict],
+    symbols: list[str],
+    total_capital: float = 100.0,
+) -> dict:
+    """Simulate running all 5 coins simultaneously on the same $100 account.
+
+    Each coin gets equal allocation (total_capital / n_coins).
+    Equity curves are combined to show the unified account performance.
+    """
+    from btc_trend_bot.metrics import calc_all_metrics
+
+    n_coins = len(symbols)
+    per_coin_capital = total_capital / n_coins
+
+    # Find best result per symbol
+    best_per_symbol: dict[str, dict] = {}
+    for symbol in symbols:
+        best_strat, best_exit = BEST_STRATEGY_PER_SYMBOL.get(
+            symbol, ("breakout_confirmed", "partial_trail")
+        )
+        for r in all_results:
+            if (r["symbol"] == symbol
+                    and r["strategy"] == best_strat
+                    and r["exit_method"] == best_exit
+                    and r.get("equity_curve") is not None):
+                best_per_symbol[symbol] = r
+                break
+
+        # Fallback: best Calmar for this symbol
+        if symbol not in best_per_symbol:
+            sym_results = [r for r in all_results
+                           if r["symbol"] == symbol and r.get("equity_curve") is not None]
+            if sym_results:
+                best = max(sym_results, key=lambda x: x.get("calmar_ratio", -999))
+                best_per_symbol[symbol] = best
+
+    if not best_per_symbol:
+        return {}
+
+    # Scale each equity curve to per_coin_capital allocation
+    scaled_equities: list[pd.Series] = []
+    all_trades: list[pd.DataFrame] = []
+
+    for symbol, r in best_per_symbol.items():
+        eq = r["equity_curve"]
+        if eq.empty:
+            continue
+
+        # Original capital was $100 per coin; scale to per_coin_capital
+        original_capital = eq.iloc[0] if len(eq) > 0 else 100.0
+        scale_factor = per_coin_capital / original_capital
+        scaled_eq = eq * scale_factor
+        scaled_eq.name = symbol
+        scaled_equities.append(scaled_eq)
+
+        # Scale trades too
+        trades = r.get("trades_df")
+        if trades is not None and not trades.empty:
+            t = trades.copy()
+            t["pnl"] = t["pnl"] * scale_factor
+            t["symbol"] = symbol
+            t["strategy"] = r["strategy"]
+            all_trades.append(t)
+
+    if not scaled_equities:
+        return {}
+
+    # Combine equity curves (align on common timeline, forward-fill)
+    eq_df = pd.concat(scaled_equities, axis=1).sort_index()
+    eq_df = eq_df.ffill().bfill()
+    portfolio_equity = eq_df.sum(axis=1)
+    portfolio_equity.name = "equity"
+
+    # Combined trades
+    combined_trades = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame()
+    if not combined_trades.empty and "entry_time" in combined_trades.columns:
+        combined_trades = combined_trades.sort_values("entry_time")
+
+    # Portfolio metrics
+    portfolio_metrics = calc_all_metrics(combined_trades, portfolio_equity)
+
+    return {
+        "portfolio_equity": portfolio_equity,
+        "per_coin_equities": eq_df,
+        "combined_trades": combined_trades,
+        "metrics": portfolio_metrics,
+        "per_coin_capital": per_coin_capital,
+        "best_per_symbol": {s: (r["strategy"], r["exit_method"])
+                            for s, r in best_per_symbol.items()},
     }
 
 
@@ -338,8 +442,8 @@ def main():
 
     results_df = pd.DataFrame(all_results)
 
-    # Drop the nested metrics dict for the CSV
-    csv_df = results_df.drop(columns=["metrics"], errors="ignore")
+    # Drop the nested columns for the CSV
+    csv_df = results_df.drop(columns=["metrics", "equity_curve", "trades_df"], errors="ignore")
 
     # Report directory
     report_dir = Path(__file__).parent / "reports" / "multisymbol"
@@ -424,6 +528,77 @@ def main():
         aggfunc="first",
     )
     pivot.to_csv(report_dir / "戦略x通貨マトリクス.csv", encoding="utf-8-sig")
+
+    # ================================================================
+    # PORTFOLIO SIMULATION: All coins on the same $100 account
+    # ================================================================
+    total_capital = config.get("backtest", {}).get("initial_capital", 100.0)
+    portfolio = run_portfolio_simulation(all_results, symbols, total_capital)
+
+    if portfolio and portfolio.get("metrics"):
+        pm = portfolio["metrics"]
+        port_eq = portfolio["portfolio_equity"]
+        combined_trades = portfolio["combined_trades"]
+        per_coin = portfolio["per_coin_capital"]
+
+        logger.info("\n" + "=" * 90)
+        logger.info(f"PORTFOLIO SIMULATION: ${total_capital:.0f} split across {len(symbols)} coins "
+                     f"(${per_coin:.0f} each)")
+        logger.info("=" * 90)
+
+        logger.info(f"\nAllocation per coin:")
+        for sym, (strat, exit_m) in portfolio["best_per_symbol"].items():
+            logger.info(f"  {sym:10s}: ${per_coin:.0f} → {strat} + {exit_m}")
+
+        final_value = float(port_eq.iloc[-1]) if not port_eq.empty else total_capital
+        total_profit = final_value - total_capital
+        total_return_pct = (total_profit / total_capital) * 100
+
+        logger.info(f"\n{'Item':30s} | {'Value':>12s}")
+        logger.info("-" * 46)
+        logger.info(f"{'Initial Capital':30s} | ${total_capital:>11.2f}")
+        logger.info(f"{'Final Value':30s} | ${final_value:>11.2f}")
+        logger.info(f"{'Total Profit':30s} | ${total_profit:>11.2f}")
+        logger.info(f"{'Total Return':30s} | {total_return_pct:>10.1f}%")
+        logger.info(f"{'Total Trades':30s} | {pm.get('total_trades', 0):>12.0f}")
+        logger.info(f"{'Win Rate':30s} | {pm.get('win_rate', 0)*100:>10.1f}%")
+        logger.info(f"{'Profit Factor':30s} | {pm.get('profit_factor', 0):>12.2f}")
+        logger.info(f"{'Calmar Ratio':30s} | {pm.get('calmar_ratio', 0):>12.2f}")
+        logger.info(f"{'Max Drawdown':30s} | {pm.get('max_drawdown_pct', 0)*100:>10.1f}%")
+        logger.info(f"{'Expectancy (per trade)':30s} | ${pm.get('expectancy', 0):>11.4f}")
+
+        # Per-coin P&L breakdown
+        logger.info(f"\nPer-coin P&L:")
+        per_coin_eq = portfolio["per_coin_equities"]
+        for col in per_coin_eq.columns:
+            start_val = per_coin_eq[col].iloc[0]
+            end_val = per_coin_eq[col].iloc[-1]
+            coin_pnl = end_val - start_val
+            coin_ret = (coin_pnl / start_val) * 100
+            logger.info(f"  {col:10s}: ${start_val:.0f} → ${end_val:.2f} "
+                         f"(${coin_pnl:+.2f}, {coin_ret:+.1f}%)")
+
+        # Save portfolio equity curve
+        port_eq.to_csv(report_dir / "portfolio_equity.csv", header=True)
+        if not combined_trades.empty:
+            combined_trades.to_csv(report_dir / "portfolio_trades.csv",
+                                   index=False, encoding="utf-8-sig")
+        per_coin_eq.to_csv(report_dir / "portfolio_per_coin_equity.csv")
+
+        # Save portfolio summary
+        summary = {
+            "initial_capital": total_capital,
+            "final_value": final_value,
+            "total_profit": total_profit,
+            "total_return_pct": total_return_pct,
+            "total_trades": pm.get("total_trades", 0),
+            "win_rate": pm.get("win_rate", 0),
+            "profit_factor": pm.get("profit_factor", 0),
+            "calmar_ratio": pm.get("calmar_ratio", 0),
+            "max_drawdown_pct": pm.get("max_drawdown_pct", 0),
+        }
+        pd.DataFrame([summary]).to_csv(report_dir / "portfolio_summary.csv",
+                                        index=False, encoding="utf-8-sig")
 
     logger.info(f"\nReports saved to: {report_dir}")
     logger.info("Done!")
