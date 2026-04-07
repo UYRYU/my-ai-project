@@ -219,10 +219,9 @@ def main():
                                 logger.debug(f"[{symbol}] Signal rejected: {reason}")
 
                     # Save state
-                    executor.state_store.update(
-                        capital=executor.capital,
-                        positions=executor.position_manager.to_dict(),
-                    )
+                    executor.state_store.set("capital", executor.capital)
+                    executor.state_store.set("positions", executor.position_manager.to_dict())
+                    executor.state_store.save()
 
                 except Exception as exc:
                     logger.error(f"[{symbol}] Cycle error: {exc}")
