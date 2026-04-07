@@ -199,10 +199,16 @@ def main():
                             f"({trade.get('exit_reason', '?')})"
                         )
 
-                    # Check new signals
+                    # Check new signals - only act on signals at the LATEST bar
+                    # (signal_engine returns all historical signals; we only want fresh ones)
                     if not executor.position_manager.has_open_position(symbol):
                         signals = executor.signal_engine.process_bar(df)
-                        for signal in signals:
+                        latest_bar_time = df.index[-1]
+                        fresh_signals = [
+                            s for s in signals
+                            if s.timestamp == latest_bar_time
+                        ]
+                        for signal in fresh_signals:
                             allowed, reason = executor.risk_manager.check_signal(
                                 signal, executor.capital, executor.peak_equity, executor.daily_pnl
                             )
