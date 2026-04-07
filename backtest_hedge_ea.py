@@ -128,37 +128,44 @@ strategies = {
 }
 
 # ---------------- 実行 ----------------
-def main():
-    N_BARS = 1440 * 20      # 20日 × 1440分 ≒ 4週間営業日想定
-    SEEDS  = [1, 2, 3, 4, 5, 6, 7, 8]
+SEEDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
-    print(f"バー数: {N_BARS} (約{N_BARS/1440:.0f}日)  シード数: {len(SEEDS)}\n")
-    print(f"{'戦略':<32}{'平均残高':>12}{'中央値':>12}{'破綻率':>10}{'平均DD':>12}{'平均決済回数':>14}")
-    print("-" * 92)
-
+def sweep(label, n_bars, sigma, balance):
+    """指定の足/口座サイズで全戦略を回す"""
+    print(f"\n========== {label}  バー={n_bars}  σ={sigma}  口座={balance:,} ==========")
+    print(f"{'戦略':<32}{'平均終値':>12}{'破綻率':>10}{'平均DD':>12}{'生残バー':>12}")
+    print("-" * 80)
     for name, fn in strategies.items():
-        finals, dds, blowups, closes = [], [], 0, []
+        finals, dds, blow, surv = [], [], 0, []
         for s in SEEDS:
-            prices = generate_prices(N_BARS, s)
-            r = run_backtest(prices, fn)
+            prices = generate_prices(n_bars, s, sigma_per_min=sigma)
+            r = run_backtest(prices, fn, initial_balance=balance)
             finals.append(r["final_equity"])
             dds.append(r["max_dd"])
-            closes.append(r["closes_buy"] + r["closes_sell"])
+            surv.append(r["bars_survived"])
             if r["blew_up"]:
-                blowups += 1
-        print(f"{name:<32}"
-              f"{statistics.mean(finals):>12,.0f}"
-              f"{statistics.median(finals):>12,.0f}"
-              f"{blowups/len(SEEDS):>9.0%}"
-              f"{statistics.mean(dds):>12,.0f}"
-              f"{statistics.mean(closes):>14,.0f}")
+                blow += 1
+        print(f"{name:<32}{statistics.mean(finals):>12,.0f}"
+              f"{blow/len(SEEDS):>9.0%}{statistics.mean(dds):>12,.0f}"
+              f"{statistics.mean(surv):>12,.0f}")
 
-    # 詳細: 戦略B を 1 シードで内訳表示
-    print("\n--- 戦略B の詳細 (seed=1) ---")
-    prices = generate_prices(N_BARS, 1)
-    r = run_backtest(prices, strategies["B: 50,95,140,... (+45)"])
-    for k, v in r.items():
-        print(f"  {k}: {v}")
+def main():
+    # 1) 証拠金スイープ (M1, 20日)
+    print("\n##### (1) 証拠金スイープ — M1, 20日間 #####")
+    for bal in [10_000, 100_000, 1_000_000, 10_000_000]:
+        sweep(f"M1 balance={bal:,}", 1440 * 20, 0.015, bal)
+
+    # 2) タイムフレーム比較 (口座 100万円)
+    # σ は √Δt でスケール: M1=0.015, M5=0.015*√5, M15=*√15, H1=*√60
+    print("\n\n##### (2) タイムフレーム比較 — 口座 1,000,000 円, 20日間 #####")
+    tf_specs = [
+        ("M1",  1440 * 20, 0.015),
+        ("M5",   288 * 20, 0.015 * math.sqrt(5)),
+        ("M15",   96 * 20, 0.015 * math.sqrt(15)),
+        ("H1",    24 * 20, 0.015 * math.sqrt(60)),
+    ]
+    for label, bars, sig in tf_specs:
+        sweep(label, bars, sig, 1_000_000)
 
 if __name__ == "__main__":
     main()
