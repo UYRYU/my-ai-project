@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from trading.strategy import (
+    atr,
     bearish_entry_pattern,
     bullish_entry_pattern,
     ema,
@@ -90,6 +91,33 @@ class SignalTests(unittest.TestCase):
             else:
                 self.assertGreater(s.stop, s.entry_price)
                 self.assertLess(s.take, s.entry_price)
+
+    def test_rr_mode_takes_match_ratio(self):
+        from trading.data import synthetic_gold_15m
+        df = synthetic_gold_15m(n_bars=500, seed=1)
+        signals = generate_signals(df, sl_mode="atr", tp_mode="rr", rr_ratio=2.0, atr_mult_sl=1.0)
+        self.assertGreater(len(signals), 0)
+        for s in signals:
+            risk = abs(s.entry_price - s.stop)
+            reward = abs(s.take - s.entry_price)
+            self.assertAlmostEqual(reward / risk, 2.0, places=5)
+
+    def test_atr_tp_mode_runs(self):
+        from trading.data import synthetic_gold_15m
+        df = synthetic_gold_15m(n_bars=500, seed=1)
+        signals = generate_signals(
+            df, sl_mode="atr", tp_mode="atr", atr_mult_sl=1.0, atr_mult_tp=2.0
+        )
+        self.assertGreater(len(signals), 0)
+
+
+class ATRTests(unittest.TestCase):
+    def test_atr_positive(self):
+        from trading.data import synthetic_gold_15m
+        df = synthetic_gold_15m(n_bars=200, seed=2)
+        a = atr(df, period=14)
+        self.assertEqual(len(a), len(df))
+        self.assertTrue((a.dropna() > 0).all())
 
 
 if __name__ == "__main__":

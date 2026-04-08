@@ -34,6 +34,12 @@ def main() -> int:
     p.add_argument("--ema", type=int, default=10, help="EMA 期間 (default: 10)")
     p.add_argument("--swing", type=int, default=20, help="直近高値/安値の参照本数 (default: 20)")
     p.add_argument("--max-bars", type=int, default=500, help="1 トレードの最大保有本数")
+    p.add_argument("--sl-mode", choices=["swing", "atr"], default="swing")
+    p.add_argument("--tp-mode", choices=["swing", "rr", "atr"], default="swing")
+    p.add_argument("--rr", type=float, default=2.0, help="tp-mode=rr 時のリスクリワード比")
+    p.add_argument("--atr-period", type=int, default=14)
+    p.add_argument("--atr-sl", type=float, default=1.5, help="ATR × N で SL を取る")
+    p.add_argument("--atr-tp", type=float, default=3.0, help="ATR × N で TP を取る")
     p.add_argument("--trades-json", help="トレード明細を JSON 保存するパス")
     args = p.parse_args()
 
@@ -55,6 +61,12 @@ def main() -> int:
         ema_period=args.ema,
         swing_lookback=args.swing,
         max_bars_per_trade=args.max_bars,
+        sl_mode=args.sl_mode,
+        tp_mode=args.tp_mode,
+        rr_ratio=args.rr,
+        atr_period=args.atr_period,
+        atr_mult_sl=args.atr_sl,
+        atr_mult_tp=args.atr_tp,
     )
 
     print()

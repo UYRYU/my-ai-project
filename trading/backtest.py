@@ -132,6 +132,12 @@ def run_backtest(
     ema_period: int = 10,
     swing_lookback: int = 20,
     max_bars_per_trade: int = 500,
+    sl_mode: str = "swing",
+    tp_mode: str = "swing",
+    rr_ratio: float = 2.0,
+    atr_period: int = 14,
+    atr_mult_sl: float = 1.5,
+    atr_mult_tp: float = 3.0,
 ) -> tuple[list[Trade], dict]:
     """
     Parameters
@@ -139,7 +145,17 @@ def run_backtest(
     df : DataFrame
         15分足 OHLC (index は Datetime)。列: open/high/low/close。
     """
-    signals = generate_signals(df, ema_period=ema_period, swing_lookback=swing_lookback)
+    signals = generate_signals(
+        df,
+        ema_period=ema_period,
+        swing_lookback=swing_lookback,
+        sl_mode=sl_mode,
+        tp_mode=tp_mode,
+        rr_ratio=rr_ratio,
+        atr_period=atr_period,
+        atr_mult_sl=atr_mult_sl,
+        atr_mult_tp=atr_mult_tp,
+    )
 
     trades: list[Trade] = []
     in_position_until: int = -1  # このインデックスまでポジション保有中
