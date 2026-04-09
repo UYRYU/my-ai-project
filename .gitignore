@@ -5,3 +5,7 @@ __pycache__/
 venv/
 .env
 .DS_Store
+# 生のティックキャッシュ (GB 単位になる)
+data/xauusd_ticks/
+data/xauusd_ticks_*/
+data/ticks/
