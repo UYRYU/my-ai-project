@@ -193,6 +193,15 @@ def trader_analysis(df: pd.DataFrame) -> Dict[str, dict]:
         }
         active_band = max(hour_bands, key=hour_bands.get)
 
+        # 発見元のウィンドウ/種別を集計 (sources カラムがあれば)
+        source_set = set()
+        if "sources" in sub.columns:
+            for s in sub["sources"].dropna().unique():
+                if isinstance(s, str) and s:
+                    for tag in s.split("|"):
+                        if tag:
+                            source_set.add(tag)
+
         result[str(trader)] = {
             "total_trades": int(len(sub)),
             "top_sport": str(top_sport),
@@ -200,6 +209,7 @@ def trader_analysis(df: pd.DataFrame) -> Dict[str, dict]:
             "avg_price": avg_price,
             "active_band": active_band,
             "hour_distribution": hour_bands,
+            "sources": sorted(source_set),
         }
 
     return result
@@ -268,8 +278,11 @@ def print_report() -> None:
 
     # --- トレーダー別分析 ---
     print("\n[4] トレーダーごとの特徴")
-    print("-" * 60)
-    print(f"{'トレーダー':<20}{'取引数':>8}{'主戦場':>10}{'特化度':>10}{'平均オッズ':>12}{'活動帯':>10}")
+    print("-" * 80)
+    print(
+        f"{'トレーダー':<20}{'取引数':>8}{'主戦場':>8}{'特化度':>9}"
+        f"{'平均オッズ':>12}{'活動帯':>10}  発見元"
+    )
     trader_stats = trader_analysis(df)
     # 取引数で降順ソート
     sorted_items = sorted(
@@ -277,13 +290,15 @@ def print_report() -> None:
     )
     for trader, stats in sorted_items:
         name = (trader[:18] + "..") if len(trader) > 20 else trader
+        sources = ",".join(stats.get("sources", [])) or "-"
         print(
             f"{name:<20}"
             f"{stats['total_trades']:>8}"
-            f"{stats['top_sport']:>10}"
-            f"{stats['sport_focus_ratio'] * 100:>9.1f}%"
+            f"{stats['top_sport']:>8}"
+            f"{stats['sport_focus_ratio'] * 100:>8.1f}%"
             f"{stats['avg_price']:>12,.3f}"
             f"{stats['active_band']:>10}"
+            f"  {sources}"
         )
 
     print("\n" + "=" * 60 + "\n")

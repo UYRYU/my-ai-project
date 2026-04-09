@@ -5,19 +5,21 @@ Polymarket Tracker - 取引履歴の収集・保存モジュール
 
 import os
 import time
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import requests
 from loguru import logger
 
 import config
-from leaderboard import get_leaderboard
+from leaderboard import get_tracked_traders
 
 
 # 保存するCSVカラム
 CSV_COLUMNS = [
     "trader",        # トレーダー名 or アドレス
+    "trader_address",  # ウォレットアドレス (名前と別に保持)
+    "sources",       # 発見元ウィンドウ (例: "profit_1d|volume_7d")
     "market_id",     # マーケットID
     "market_title",  # マーケットタイトル
     "sport",         # スポーツ種別 (NBA/NFL/MLB/NHL/OTHER)
@@ -84,17 +86,23 @@ def _is_sports_market(title: str) -> bool:
     return False
 
 
-def get_user_trades(address: str) -> List[dict]:
+def get_user_trades(
+    address: str,
+    username: str = "",
+    sources: Optional[List[str]] = None,
+) -> List[dict]:
     """
     指定アドレスの取引履歴を取得し、スポーツ関連のみフィルタして返す。
 
     Args:
         address: トレーダーのウォレットアドレス
+        username: 表示用のユーザー名 (空ならアドレスを使う)
+        sources: このトレーダーが発見された元 (例: ["profit_1d", "volume_7d"])
 
     Returns:
         List[dict]: フィルタ済みの取引レコードのリスト (CSV_COLUMNS 準拠)
     """
-    logger.info(f"取引履歴取得: {address}")
+    logger.info(f"取引履歴取得: {username or address}")
 
     params = {
         "user": address,
@@ -167,7 +175,9 @@ def get_user_trades(address: str) -> List[dict]:
             timestamp = 0
 
         trades.append({
-            "trader": address,
+            "trader": username or address,
+            "trader_address": address,
+            "sources": "|".join(sources) if sources else "",
             "market_id": market_id,
             "market_title": title,
             "sport": _detect_sport(title),
@@ -209,11 +219,21 @@ def save_trades(trades: List[dict]) -> int:
             logger.warning(f"既存CSVの読み込みに失敗 (新規作成します): {e}")
             existing_df = pd.DataFrame(columns=CSV_COLUMNS)
 
-        # 重複キーの作成
+        # 既存CSVに新カラムが無ければ追加 (後方互換)
+        for col in CSV_COLUMNS:
+            if col not in existing_df.columns:
+                existing_df[col] = "" if col in ("trader_address", "sources") else None
+        existing_df = existing_df[CSV_COLUMNS]
+
+        # 重複キーの作成: trader_address が使えればそちらで、無ければ trader名で
         def _make_key(df: pd.DataFrame) -> pd.Series:
+            key_trader = df["trader_address"].astype(str).where(
+                df["trader_address"].astype(str).str.len() > 0,
+                df["trader"].astype(str),
+            )
             return (
                 df["market_id"].astype(str)
-                + "|" + df["trader"].astype(str)
+                + "|" + key_trader
                 + "|" + df["timestamp"].astype(str)
             )
 
@@ -239,36 +259,45 @@ def save_trades(trades: List[dict]) -> int:
 
 def collect_all() -> int:
     """
-    リーダーボード上位者全員の取引を収集しCSVに保存する。
+    複数ウィンドウ (日次/週次/全期間) × 種別 (profit/volume) の上位者を
+    全て集め、重複排除した上で各トレーダーの取引履歴を収集しCSVに保存する。
+
+    追跡対象ウィンドウ/種別は config.TRACK_WINDOWS / TRACK_TYPES で設定。
 
     Returns:
         int: 新規保存件数の合計
     """
-    logger.info("=" * 50)
-    logger.info("全上位者の取引収集を開始")
-    logger.info("=" * 50)
+    logger.info("=" * 60)
+    logger.info("上位トレーダー収集を開始 (日次/週次/全期間を合算)")
+    logger.info("=" * 60)
 
-    users = get_leaderboard()
+    # 複数ウィンドウから追跡対象を集める (leaderboard.py 側で重複排除済み)
+    users = get_tracked_traders()
     if not users:
-        logger.error("リーダーボードが空のため収集を中止")
+        logger.error("追跡対象トレーダーが空のため収集を中止")
         return 0
+
+    logger.info(f"{len(users)} 人のトレーダーの取引履歴を収集します")
 
     all_trades: List[dict] = []
     for user in users:
         address = user["address"]
         username = user.get("username", "")
-        logger.info(f"→ {username} ({address})")
+        sources = user.get("sources", [])
+        logger.info(f"→ {username or '(no name)'} ({address}) sources={sources}")
 
-        trades = get_user_trades(address)
-
-        # trader 欄をユーザー名に差し替え (アドレスしかなければそのまま)
-        for t in trades:
-            if username:
-                t["trader"] = username
+        trades = get_user_trades(
+            address=address,
+            username=username,
+            sources=sources,
+        )
         all_trades.extend(trades)
 
     added = save_trades(all_trades)
-    logger.info(f"収集完了: 新規 {added} 件 / 取得総数 {len(all_trades)} 件")
+    logger.info(
+        f"収集完了: 新規 {added} 件 / 取得総数 {len(all_trades)} 件 "
+        f"/ 追跡 {len(users)} 人"
+    )
     return added
 
 

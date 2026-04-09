@@ -20,4 +20,5 @@ Thumbs.db
 
 # Polymarket tracker data
 polymarket/data/trades.csv
+polymarket/data/leaderboards/
 polymarket/leaderboard.json
