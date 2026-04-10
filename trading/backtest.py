@@ -25,7 +25,7 @@ class Trade:
     exit_price: float
     stop: float
     take: float
-    result: Literal["tp", "sl", "eod"]
+    result: Literal["tp", "sl", "trail", "eod"]
     pnl: float        # 価格差分 (通貨単位)
     pnl_r: float      # リスク (|entry-stop|) に対する倍率 = R倍
 
@@ -40,9 +40,16 @@ def _simulate_trade(
     df: pd.DataFrame,
     signal: Signal,
     max_bars: int = 500,
+    trailing_stop: bool = False,
+    trail_activation_r: float = 0.5,
+    trail_distance_r: float = 0.5,
 ) -> Trade | None:
     """
     1 シグナルを 1 トレードとしてバーを前進させながら決済をシミュレート。
+
+    trailing_stop=True のとき:
+      - 含み益が trail_activation_r × risk に達したら SL を BE+α にスライド
+      - その後は最良到達点から trail_distance_r × risk の距離でトレイル
     """
     n = len(df)
     i0 = signal.entry_index
@@ -50,23 +57,48 @@ def _simulate_trade(
         return None
 
     entry_price = signal.entry_price
-    stop = signal.stop
+    initial_stop = signal.stop
+    stop = initial_stop
     take = signal.take
     entry_time = df.index[i0]
+    risk = abs(entry_price - initial_stop)
+    if risk <= 0:
+        return None
 
-    # エントリー足を含めて max_bars 本まで監視
     end = min(n, i0 + max_bars)
     high = df["high"].to_numpy()
     low = df["low"].to_numpy()
 
+    best_price = entry_price  # 到達した最良価格
+
     for j in range(i0, end):
         hi = high[j]
         lo = low[j]
+
+        # トレーリングストップの更新 (足の始値相当をまず評価)
+        if trailing_stop:
+            if signal.side == "long":
+                if hi > best_price:
+                    best_price = hi
+                unrealized_r = (best_price - entry_price) / risk
+                if unrealized_r >= trail_activation_r:
+                    new_stop = best_price - trail_distance_r * risk
+                    if new_stop > stop:
+                        stop = new_stop
+            else:
+                if lo < best_price:
+                    best_price = lo
+                unrealized_r = (entry_price - best_price) / risk
+                if unrealized_r >= trail_activation_r:
+                    new_stop = best_price + trail_distance_r * risk
+                    if new_stop < stop:
+                        stop = new_stop
+
         if signal.side == "long":
             hit_sl = lo <= stop
             hit_tp = hi >= take
             if hit_sl and hit_tp:
-                exit_price = stop  # 保守的
+                exit_price = stop
                 result = "sl"
             elif hit_sl:
                 exit_price = stop
@@ -92,8 +124,10 @@ def _simulate_trade(
                 continue
 
         pnl = (exit_price - entry_price) if signal.side == "long" else (entry_price - exit_price)
-        risk = abs(entry_price - stop)
-        pnl_r = pnl / risk if risk > 0 else 0.0
+        pnl_r = pnl / risk
+        # トレイルで止まった場合、SL exit だけど利益の場合は "trail" 扱い
+        if trailing_stop and result == "sl" and pnl > 0:
+            result = "trail"
         return Trade(
             side=signal.side,
             entry_time=entry_time,
@@ -107,12 +141,11 @@ def _simulate_trade(
             pnl_r=pnl_r,
         )
 
-    # タイムアウト: 最終足の終値で強制決済
+    # タイムアウト
     last = end - 1
     exit_price = float(df["close"].iloc[last])
     pnl = (exit_price - entry_price) if signal.side == "long" else (entry_price - exit_price)
-    risk = abs(entry_price - stop)
-    pnl_r = pnl / risk if risk > 0 else 0.0
+    pnl_r = pnl / risk
     return Trade(
         side=signal.side,
         entry_time=entry_time,
@@ -138,12 +171,21 @@ def run_backtest(
     atr_period: int = 14,
     atr_mult_sl: float = 1.5,
     atr_mult_tp: float = 3.0,
+    trailing_stop: bool = False,
+    trail_activation_r: float = 0.5,
+    trail_distance_r: float = 0.5,
 ) -> tuple[list[Trade], dict]:
     """
     Parameters
     ----------
     df : DataFrame
         15分足 OHLC (index は Datetime)。列: open/high/low/close。
+    trailing_stop : bool
+        トレーリングストップ有効化。
+    trail_activation_r : float
+        含み益が risk × この値 に達したらトレイル開始。
+    trail_distance_r : float
+        最高到達点から risk × この値 の距離で SL を追従。
     """
     signals = generate_signals(
         df,
@@ -158,11 +200,17 @@ def run_backtest(
     )
 
     trades: list[Trade] = []
-    in_position_until: int = -1  # このインデックスまでポジション保有中
+    in_position_until: int = -1
     for sig in signals:
         if sig.entry_index <= in_position_until:
-            continue  # ポジション保有中はスキップ
-        trade = _simulate_trade(df, sig, max_bars=max_bars_per_trade)
+            continue
+        trade = _simulate_trade(
+            df, sig,
+            max_bars=max_bars_per_trade,
+            trailing_stop=trailing_stop,
+            trail_activation_r=trail_activation_r,
+            trail_distance_r=trail_distance_r,
+        )
         if trade is None:
             continue
         trades.append(trade)
