@@ -201,6 +201,9 @@ def generate_signals(
     atr_period: int = 14,
     atr_mult_sl: float = 1.5,
     atr_mult_tp: float = 3.0,
+    htf_trend_filter: bool = False,
+    htf_ema_period: int = 50,
+    htf_timeframe: str = "1h",
 ) -> list[Signal]:
     """
     OHLC データからシグナルを生成する。
@@ -221,6 +224,12 @@ def generate_signals(
         tp_mode="rr" のときのリスクリワード比 (例: 2.0)。
     atr_period, atr_mult_sl, atr_mult_tp : float
         ATR ベースモード用パラメータ。
+    htf_trend_filter : bool
+        上位足トレンドフィルター有効化。
+    htf_ema_period : int
+        上位足 EMA 期間 (デフォルト 50)。
+    htf_timeframe : str
+        上位足のリサンプル間隔 (デフォルト "1h")。
     """
     required = {"open", "high", "low", "close"}
     if not required.issubset(df.columns):
@@ -229,6 +238,17 @@ def generate_signals(
     df = df.copy()
     df["ema"] = ema(df["close"], ema_period)
     df["atr"] = atr(df, atr_period)
+
+    # 上位足トレンドフィルター
+    htf_trend_arr: np.ndarray | None = None
+    if htf_trend_filter:
+        htf = df[["open", "high", "low", "close"]].resample(htf_timeframe).agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}
+        ).dropna()
+        htf_ema = ema(htf["close"], htf_ema_period)
+        htf_trend = (htf_ema > htf_ema.shift(10))  # True = uptrend
+        htf_trend_15m = htf_trend.reindex(df.index, method="ffill")
+        htf_trend_arr = htf_trend_15m.to_numpy()
 
     o_arr = df["open"].to_numpy()
     h_arr = df["high"].to_numpy()
@@ -268,6 +288,9 @@ def generate_signals(
                 continue
             touched = l_arr[i] <= curr_ema
             if touched and bullish_entry_pattern(o_arr[i], h_arr[i], l_arr[i], c_arr[i]):
+                # 上位足フィルター: uptrend でないならスキップ
+                if htf_trend_arr is not None and not htf_trend_arr[i]:
+                    continue
                 lo = max(0, i - swing_lookback)
                 recent_high = float(np.max(h_arr[lo : i + 1]))
                 recent_low = float(np.min(l_arr[lo : i + 1]))
@@ -296,6 +319,9 @@ def generate_signals(
                 continue
             touched = h_arr[i] >= curr_ema
             if touched and bearish_entry_pattern(o_arr[i], h_arr[i], l_arr[i], c_arr[i]):
+                # 上位足フィルター: downtrend でないならスキップ
+                if htf_trend_arr is not None and htf_trend_arr[i]:
+                    continue
                 lo = max(0, i - swing_lookback)
                 recent_high = float(np.max(h_arr[lo : i + 1]))
                 recent_low = float(np.min(l_arr[lo : i + 1]))

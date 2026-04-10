@@ -174,6 +174,9 @@ def run_backtest(
     trailing_stop: bool = False,
     trail_activation_r: float = 0.5,
     trail_distance_r: float = 0.5,
+    htf_trend_filter: bool = False,
+    htf_ema_period: int = 50,
+    htf_timeframe: str = "1h",
 ) -> tuple[list[Trade], dict]:
     """
     Parameters
@@ -186,6 +189,12 @@ def run_backtest(
         含み益が risk × この値 に達したらトレイル開始。
     trail_distance_r : float
         最高到達点から risk × この値 の距離で SL を追従。
+    htf_trend_filter : bool
+        上位足トレンドフィルター有効化。
+    htf_ema_period : int
+        上位足 EMA 期間。
+    htf_timeframe : str
+        上位足リサンプル間隔。
     """
     signals = generate_signals(
         df,
@@ -197,6 +206,9 @@ def run_backtest(
         atr_period=atr_period,
         atr_mult_sl=atr_mult_sl,
         atr_mult_tp=atr_mult_tp,
+        htf_trend_filter=htf_trend_filter,
+        htf_ema_period=htf_ema_period,
+        htf_timeframe=htf_timeframe,
     )
 
     trades: list[Trade] = []
