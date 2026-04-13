@@ -188,6 +188,24 @@ async def run_bot(
                     cycle, MAX_EVENTS, len(opps), elapsed,
                 )
 
+            # Auto-exit: check for resolved markets every 10 cycles
+            if cycle % 10 == 0:
+                try:
+                    from bot.resolver import check_resolutions, check_stale_positions
+                    from bot.executor import get_state
+                    state = get_state()
+                    closed = await check_resolutions(client, state)
+                    if closed:
+                        logger.info("Auto-closed %d positions: %s", len(closed), closed)
+                        await _send_webhook(
+                            f"AUTO-EXIT: {len(closed)} positions resolved: {closed}"
+                        )
+                    stale = check_stale_positions(state)
+                    if stale:
+                        logger.warning("%d stale positions: %s", len(stale), stale)
+                except Exception as e:
+                    logger.warning("Resolution check failed: %s", e)
+
             # Clear seen_ids periodically (every 100 cycles)
             if cycle % 100 == 0:
                 seen_ids.clear()
