@@ -56,20 +56,71 @@ def _request_with_retry(url: str, params: dict) -> list:
     raise RuntimeError(f"アクティビティ取得に失敗しました: {last_exc}")
 
 
+# チーム名 → リーグのマッピング (タイトルにリーグ名が無い場合の判定用)
+_TEAM_TO_LEAGUE = {}
+_NBA_TEAMS = [
+    "76ers", "Bucks", "Bulls", "Cavaliers", "Cavs", "Celtics", "Clippers",
+    "Grizzlies", "Hawks", "Heat", "Hornets", "Jazz", "Kings", "Knicks",
+    "Lakers", "Magic", "Mavericks", "Mavs", "Nets", "Nuggets", "Pacers",
+    "Pelicans", "Pistons", "Raptors", "Rockets", "Sixers", "Spurs", "Suns",
+    "Thunder", "Timberwolves", "Trail Blazers", "Warriors", "Wizards",
+]
+_NFL_TEAMS = [
+    "49ers", "Bears", "Bengals", "Bills", "Broncos", "Browns", "Buccaneers",
+    "Cardinals", "Chargers", "Chiefs", "Colts", "Commanders", "Cowboys",
+    "Dolphins", "Eagles", "Falcons", "Giants", "Jaguars", "Jets", "Lions",
+    "Packers", "Panthers", "Patriots", "Raiders", "Rams", "Ravens", "Saints",
+    "Seahawks", "Steelers", "Texans", "Titans", "Vikings",
+]
+_MLB_TEAMS = [
+    "Angels", "Astros", "Athletics", "Blue Jays", "Braves", "Brewers",
+    "Cardinals", "Cubs", "Diamondbacks", "D-backs", "Dodgers", "Giants",
+    "Guardians", "Mariners", "Marlins", "Mets", "Nationals", "Orioles",
+    "Padres", "Phillies", "Pirates", "Rangers", "Rays", "Red Sox", "Reds",
+    "Rockies", "Royals", "Tigers", "Twins", "White Sox", "Yankees",
+]
+_NHL_TEAMS = [
+    "Avalanche", "Blackhawks", "Blue Jackets", "Blues", "Bruins",
+    "Canadiens", "Canucks", "Capitals", "Coyotes", "Devils", "Ducks",
+    "Flames", "Flyers", "Golden Knights", "Hurricanes", "Islanders",
+    "Jets", "Kraken", "Kings", "Lightning", "Maple Leafs", "Oilers",
+    "Panthers", "Penguins", "Predators", "Rangers", "Red Wings",
+    "Sabres", "Senators", "Sharks", "Stars", "Wild", "Utah Hockey Club",
+]
+for _t in _NBA_TEAMS: _TEAM_TO_LEAGUE[_t.upper()] = "NBA"
+for _t in _NFL_TEAMS: _TEAM_TO_LEAGUE[_t.upper()] = "NFL"
+for _t in _MLB_TEAMS: _TEAM_TO_LEAGUE[_t.upper()] = "MLB"
+for _t in _NHL_TEAMS: _TEAM_TO_LEAGUE[_t.upper()] = "NHL"
+# 重複チーム名 (Cardinals, Giants, Kings, Jets, Panthers, Rangers) は
+# 先に登録された方が勝つが、実用上は大きな問題にならない
+
+
 def _detect_sport(title: str) -> str:
     """
     マーケットタイトルからスポーツ種別を推定する。
-    該当しない場合は "OTHER" を返す。
+    1. タイトルにリーグ名 (NBA/NFL/MLB/NHL) が含まれていればそれを返す
+    2. チーム名で判定 (Nuggets→NBA, Bruins→NHL 等)
+    3. "vs" / "O/U" があればスポーツ系だが特定できない場合は "SPORTS"
+    4. いずれにも該当しなければ "OTHER"
     """
     if not title:
         return "OTHER"
     upper = title.upper()
+
+    # 1. リーグ名が直接含まれているか
     for tag in ["NBA", "NFL", "MLB", "NHL"]:
         if tag in upper:
             return tag
-    # vs / Will の場合は一般スポーツとして扱う
-    if " VS " in upper or upper.startswith("WILL "):
+
+    # 2. チーム名で判定
+    for team_name, league in _TEAM_TO_LEAGUE.items():
+        if team_name in upper:
+            return league
+
+    # 3. "vs" や "O/U" (Over/Under) パターン
+    if " VS " in upper or " VS. " in upper or "O/U" in upper or upper.startswith("WILL "):
         return "SPORTS"
+
     return "OTHER"
 
 
