@@ -77,12 +77,12 @@ def _parse_user(item: dict) -> Optional[dict]:
     if not address:
         return None
 
-    # ユーザー名
+    # ユーザー名 (API は "userName" を返す ※大文字N注意)
     username = (
-        item.get("username")
+        item.get("userName")
+        or item.get("username")
         or item.get("name")
         or item.get("displayName")
-        or item.get("pseudonym")
         or ""
     )
 
