@@ -40,18 +40,37 @@ MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "500"))             # cap per scan
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")                   # Discord/Telegram
 LOG_DIR = Path(os.environ.get("LOG_DIR", "bot_logs"))
 
+# Focus on short-duration markets (5-min crypto). Set 0 to disable.
+MAX_DURATION_MIN = int(os.environ.get("MAX_DURATION_MIN", "0"))   # max minutes until resolution
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _filter_liquid(events: list[Event]) -> list[Event]:
-    """Keep only events with sufficient liquidity."""
+    """Keep only events with sufficient liquidity and (optionally) short duration."""
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    max_dur = timedelta(minutes=MAX_DURATION_MIN) if MAX_DURATION_MIN > 0 else None
+
     filtered = []
     for event in events:
-        liquid_markets = [m for m in event.markets if m.volume >= MIN_VOLUME]
-        if liquid_markets:
-            event.markets = liquid_markets
+        eligible = []
+        for m in event.markets:
+            if m.volume < MIN_VOLUME:
+                continue
+            if max_dur is not None:
+                if m.end_date is None:
+                    continue
+                # Normalize timezone
+                end = m.end_date if m.end_date.tzinfo else m.end_date.replace(tzinfo=timezone.utc)
+                time_left = end - now
+                if time_left <= timedelta(0) or time_left > max_dur:
+                    continue
+            eligible.append(m)
+        if eligible:
+            event.markets = eligible
             filtered.append(event)
     return filtered
 
