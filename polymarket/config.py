@@ -14,6 +14,9 @@ ACTIVITY_URL = "https://data-api.polymarket.com/activity"
 # マーケット情報取得 (Gamma API)
 MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 
+# CLOB API (マーケットの勝敗判定に使用。tokens[].winner が明示的にある)
+CLOB_URL = "https://clob.polymarket.com/markets"
+
 
 # ===== トラッキング設定 =====
 
