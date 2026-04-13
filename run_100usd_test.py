@@ -11,11 +11,12 @@ import os
 import random
 from datetime import datetime, timedelta, timezone
 
-# $100用のリスク設定
+# $100用のリスク設定 — 固定$50/取引
+os.environ["FIXED_TRADE_SIZE"] = "50"   # 固定$50/取引 (両ポジ合計)
 os.environ["MIN_TRADE_SIZE"] = "5"      # 最低$5/取引
-os.environ["MAX_SINGLE_TRADE_PCT"] = "0.20"  # 最大20%/取引 = $20
-os.environ["MAX_UTILIZATION"] = "0.80"  # 最大80%稼働 = $80
-os.environ["MAX_CONCURRENT"] = "5"      # 最大5ポジション
+os.environ["MAX_SINGLE_TRADE_PCT"] = "0.50"  # 最大50%/取引 = $50
+os.environ["MAX_UTILIZATION"] = "0.90"  # 最大90%稼働
+os.environ["MAX_CONCURRENT"] = "2"      # 最大2ポジション ($50×2=$100)
 
 from polymarket_arbitrage.models.market import (
     Event, Market, MarketStatus, Token,
@@ -131,9 +132,9 @@ def main():
     print("  2週間テスト前のペーパートレード")
     print("=" * 55)
     print(f"  資金: $100 (≈¥15,900)")
-    print(f"  1取引: $5〜$20 (Kelly自動計算)")
+    print(f"  1取引: 固定 $50 (YES≈$25 + NO≈$25)")
     print(f"  コイン: {len(COINS)}種 ({', '.join(COINS)})")
-    print(f"  リスク上限: 80%稼働, 最大5ポジ同時")
+    print(f"  リスク上限: 90%稼働, 最大2ポジ同時")
     print()
 
     state = PortfolioState(

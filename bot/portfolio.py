@@ -178,9 +178,10 @@ def kelly_size(
 # ── Position sizing engine ───────────────────────────────────────────
 
 # Risk limits — configurable via env vars for different capital sizes
-MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.20"))
-MAX_UTILIZATION = float(os.environ.get("MAX_UTILIZATION", "0.70"))
-MAX_PER_MARKET = float(os.environ.get("MAX_PER_MARKET", "0.10"))
+FIXED_TRADE_SIZE = float(os.environ.get("FIXED_TRADE_SIZE", "0"))  # 0 = use Kelly, >0 = fixed
+MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.50"))
+MAX_UTILIZATION = float(os.environ.get("MAX_UTILIZATION", "0.80"))
+MAX_PER_MARKET = float(os.environ.get("MAX_PER_MARKET", "0.50"))
 MAX_CONCURRENT_POSITIONS = int(os.environ.get("MAX_CONCURRENT", "10"))
 MIN_TRADE_SIZE = float(os.environ.get("MIN_TRADE_SIZE", "5"))  # $5 min for small accounts
 
@@ -222,45 +223,44 @@ def calculate_position_size(
             logger.info("SKIP: already have position in overlapping markets")
             return None
 
-    # --- Kelly sizing ---
+    # --- Position sizing ---
 
-    margin = opp.net_profit_per_dollar
-
-    # Estimate win probability based on arb type
-    if opp.arb_type == ArbitrageType.NEGRISK_INTRA:
-        win_prob = 0.97  # NegRisk is structurally guaranteed
-    elif opp.arb_type == ArbitrageType.SINGLE_CONDITION:
-        win_prob = 0.95  # slightly less certain (execution risk)
+    if FIXED_TRADE_SIZE > 0:
+        # Fixed mode: always trade the same amount
+        size = FIXED_TRADE_SIZE
     else:
-        win_prob = 0.85  # combinatorial has model risk
+        # Kelly mode: calculate optimal size
+        margin = opp.net_profit_per_dollar
 
-    # Adjust win probability by market liquidity
-    min_liquidity = min((m.liquidity for m in opp.markets), default=0)
-    if min_liquidity < 10_000:
-        win_prob *= 0.90  # low liquidity penalty
-    elif min_liquidity < 50_000:
-        win_prob *= 0.95
+        if opp.arb_type == ArbitrageType.NEGRISK_INTRA:
+            win_prob = 0.97
+        elif opp.arb_type == ArbitrageType.SINGLE_CONDITION:
+            win_prob = 0.95
+        else:
+            win_prob = 0.85
 
-    kelly = kelly_size(
-        bankroll=state.available_cash,
-        win_prob=win_prob,
-        win_ratio=margin,
-        fraction=0.75,  # aggressive — arb is structurally guaranteed
-    )
+        min_liquidity = min((m.liquidity for m in opp.markets), default=0)
+        if min_liquidity < 10_000:
+            win_prob *= 0.90
+        elif min_liquidity < 50_000:
+            win_prob *= 0.95
 
-    # --- Apply hard limits ---
+        size = kelly_size(
+            bankroll=state.available_cash,
+            win_prob=win_prob,
+            win_ratio=margin,
+            fraction=0.75,
+        )
 
-    max_by_equity = equity * MAX_SINGLE_TRADE_PCT
-    max_by_market = equity * MAX_PER_MARKET
-    max_by_cash = state.available_cash * 0.90  # keep 10% reserve
-    max_by_utilization = equity * (MAX_UTILIZATION - state.utilization)
+    # --- Hard limits ---
 
-    size = min(kelly, max_by_equity, max_by_market, max_by_cash, max_by_utilization)
+    size = min(size, equity * MAX_SINGLE_TRADE_PCT)
+    size = min(size, equity * MAX_PER_MARKET)
+    size = min(size, state.available_cash)  # can't spend more than we have
     size = max(size, 0.0)
 
-    # Minimum trade size
     if size < MIN_TRADE_SIZE:
-        logger.info("SKIP: calculated size $%.2f < $%.0f minimum", size, MIN_TRADE_SIZE)
+        logger.info("SKIP: size $%.2f < $%.0f minimum", size, MIN_TRADE_SIZE)
         return None
 
     return round(size, 2)
