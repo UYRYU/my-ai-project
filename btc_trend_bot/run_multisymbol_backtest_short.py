@@ -51,16 +51,83 @@ def _get_short_strategy_classes() -> dict:
     }
 
 
-# Per-symbol overrides — start with defaults, tune after first run
-SYMBOL_SHORT_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {}
-SYMBOL_SHORT_EXIT_OVERRIDES: dict[str, dict] = {}
+# Per-symbol overrides — optimized via parameter sweep
+SYMBOL_SHORT_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
+    # BTC: mtf_short with default strat params (s0) is best
+    "ETHUSDT": {
+        "breakdown_confirmed": {
+            "adx_min": 18,
+            "bar_strength_min": 0.6,
+        },
+    },
+    "XRPUSDT": {
+        "breakdown_confirmed": {
+            "adx_min": 18,
+            "bar_strength_min": 0.6,
+        },
+    },
+    "DOGEUSDT": {
+        "breakdown_confirmed": {
+            "adx_min": 18,
+            "volume_mult": 1.1,
+            "atr_sl_mult": 2.0,
+            "bar_strength_min": 0.6,
+        },
+    },
+    "SOLUSDT": {
+        "breakdown_confirmed": {
+            "adx_min": 18,
+            "volume_mult": 1.1,
+            "atr_sl_mult": 2.0,
+            "bar_strength_min": 0.6,
+        },
+    },
+}
+
+SYMBOL_SHORT_EXIT_OVERRIDES: dict[str, dict] = {
+    "BTCUSDT": {
+        "partial_trail": {
+            "first_tp_rr": 2.0,
+            "first_tp_pct": 50.0,
+            "trail_atr_mult": 1.3,
+        },
+    },
+    "ETHUSDT": {
+        "partial_trail": {
+            "first_tp_rr": 2.0,
+            "first_tp_pct": 50.0,
+            "trail_atr_mult": 1.3,
+        },
+    },
+    "XRPUSDT": {
+        "partial_trail": {
+            "first_tp_rr": 2.5,
+            "first_tp_pct": 40.0,
+            "trail_atr_mult": 1.5,
+        },
+    },
+    "DOGEUSDT": {
+        "partial_trail": {
+            "first_tp_rr": 2.0,
+            "first_tp_pct": 50.0,
+            "trail_atr_mult": 1.3,
+        },
+    },
+    "SOLUSDT": {
+        "partial_trail": {
+            "first_tp_rr": 2.0,
+            "first_tp_pct": 50.0,
+            "trail_atr_mult": 1.3,
+        },
+    },
+}
 
 BEST_SHORT_STRATEGY_PER_SYMBOL: dict[str, tuple[str, str]] = {
-    "BTCUSDT":  ("breakdown_confirmed", "partial_trail"),
-    "ETHUSDT":  ("breakdown_confirmed", "partial_trail"),
-    "XRPUSDT":  ("breakdown_confirmed", "partial_trail"),
-    "DOGEUSDT": ("multi_tf_trend_hold_short", "partial_trail"),
-    "SOLUSDT":  ("breakdown_confirmed", "partial_trail"),
+    "BTCUSDT":  ("multi_tf_trend_hold_short", "partial_trail"),
+    "ETHUSDT":  ("breakdown_confirmed",       "partial_trail"),
+    "XRPUSDT":  ("breakdown_confirmed",       "partial_trail"),
+    "DOGEUSDT": ("breakdown_confirmed",       "partial_trail"),
+    "SOLUSDT":  ("breakdown_confirmed",       "partial_trail"),
 }
 
 
