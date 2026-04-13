@@ -1,11 +1,10 @@
 """Trade executor for Polymarket CLOB API.
 
-When the scanner finds an arb, this module places the orders.
-Uses the official py-clob-client SDK.
-
-Two execution modes:
-  1. DRY_RUN (default): log the trade, don't execute
-  2. LIVE: actually place orders on Polymarket
+When the scanner finds an arb, this module:
+  1. Asks portfolio manager for optimal position size (Kelly criterion)
+  2. Checks risk limits (max utilization, max per trade, etc.)
+  3. Places orders via CLOB API (or logs dry run)
+  4. Records the position for tracking
 
 Setup:
   pip install py-clob-client
@@ -22,12 +21,29 @@ import os
 from typing import Optional
 
 from polymarket_arbitrage.models.market import ArbitrageOpportunity, ArbitrageType
+from bot.portfolio import (
+    PortfolioState,
+    calculate_position_size,
+    load_state,
+    print_dashboard,
+    record_entry,
+    save_state,
+)
 
 logger = logging.getLogger(__name__)
 
 EXECUTION_MODE = os.environ.get("EXECUTION_MODE", "dry_run")  # "dry_run" or "live"
-POSITION_SIZE_USD = float(os.environ.get("POSITION_SIZE", "50"))  # $50 per trade default
-MAX_POSITION_USD = float(os.environ.get("MAX_POSITION", "200"))   # $200 max per trade
+
+# Portfolio state — loaded once, persisted across restarts
+_state: Optional[PortfolioState] = None
+
+
+def get_state() -> PortfolioState:
+    global _state
+    if _state is None:
+        initial = float(os.environ.get("INITIAL_CAPITAL", "3145"))  # 50万円
+        _state = load_state(initial_capital=initial)
+    return _state
 
 
 def _get_clob_client():
@@ -53,32 +69,21 @@ def _get_clob_client():
         return None
 
 
-def _calculate_position_size(opp: ArbitrageOpportunity) -> float:
-    """Calculate position size based on opportunity quality."""
-    # Scale position with profit margin
-    # Higher margin → larger position (up to MAX)
-    base = POSITION_SIZE_USD
-    margin = opp.net_profit_per_dollar
-
-    if margin > 0.05:
-        size = base * 3    # 5%+ margin → 3x
-    elif margin > 0.03:
-        size = base * 2    # 3-5% → 2x
-    else:
-        size = base         # <3% → 1x
-
-    return min(size, MAX_POSITION_USD)
-
-
 async def execute_arb(opp: ArbitrageOpportunity) -> bool:
-    """Execute an arbitrage trade.
+    """Execute an arbitrage trade with automatic position sizing.
 
-    For NegRisk LONG arb: buy YES tokens on all markets in the event
-    For NegRisk SHORT arb: buy NO tokens on the most overpriced market
-    For single-condition LONG: buy both YES and NO
-    For single-condition SHORT: sell both (or split position)
+    Flow:
+      1. Portfolio manager calculates Kelly-optimal size
+      2. Risk limits are checked (max utilization, duplicates, etc.)
+      3. Trade is executed (or dry-run logged)
+      4. Position is recorded for tracking
     """
-    size = _calculate_position_size(opp)
+    state = get_state()
+
+    # Ask portfolio manager for optimal size
+    size = calculate_position_size(state, opp)
+    if size is None:
+        return False  # risk limits say skip
 
     if EXECUTION_MODE == "dry_run":
         logger.info(
@@ -90,7 +95,10 @@ async def execute_arb(opp: ArbitrageOpportunity) -> bool:
             size,
             size * opp.net_profit_per_dollar,
         )
+        # Record position even in dry run for tracking simulation
+        record_entry(state, opp, size)
         _log_dry_run(opp, size)
+        print_dashboard(state)
         return True
 
     # LIVE execution
@@ -101,12 +109,17 @@ async def execute_arb(opp: ArbitrageOpportunity) -> bool:
 
     try:
         if opp.arb_type == ArbitrageType.NEGRISK_INTRA:
-            return await _execute_negrisk(client, opp, size)
+            success = await _execute_negrisk(client, opp, size)
         elif opp.arb_type == ArbitrageType.SINGLE_CONDITION:
-            return await _execute_single_condition(client, opp, size)
+            success = await _execute_single_condition(client, opp, size)
         else:
             logger.warning("Unsupported arb type for execution: %s", opp.arb_type)
             return False
+
+        if success:
+            record_entry(state, opp, size)
+            print_dashboard(state)
+        return success
     except Exception as e:
         logger.error("Execution failed: %s", e)
         return False
