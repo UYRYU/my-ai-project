@@ -18,6 +18,7 @@ Two types of intra-market arbitrage (from the paper):
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 
 from polymarket_arbitrage.config import MIN_ARBITRAGE_THRESHOLD, TRADING_FEE_RATE
@@ -30,6 +31,9 @@ from polymarket_arbitrage.models.market import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Skip markets whose price sum is too low (resolved/dead markets)
+MIN_PRICE_SUM = float(os.environ.get("MIN_PRICE_SUM", "0.50"))
 
 
 def _compute_net_profit(raw_profit: float, direction: ArbitrageDirection) -> float:
@@ -63,6 +67,10 @@ def detect_single_condition_arbitrage(
     for market in markets:
         price_sum = market.price_sum
         if price_sum is None:
+            continue
+
+        # Skip resolved/dead markets where prices have collapsed
+        if price_sum < MIN_PRICE_SUM:
             continue
 
         deviation = price_sum - 1.0
@@ -132,6 +140,11 @@ def detect_negrisk_arbitrage(events: list[Event]) -> list[ArbitrageOpportunity]:
             continue
 
         price_sum = sum(yes_prices)
+
+        # Skip resolved/dead events
+        if price_sum < MIN_PRICE_SUM:
+            continue
+
         deviation = price_sum - 1.0
 
         if abs(deviation) < MIN_ARBITRAGE_THRESHOLD:
