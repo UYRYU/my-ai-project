@@ -11,18 +11,27 @@ from loguru import logger
 
 import config
 from tracker import collect_all
+from resolver import update_results
 
 
 def _job() -> None:
     """
     定期実行されるジョブ本体。
-    開始時刻・取得件数・完了時刻をログ出力する。
+    1. collect_all() で新規取引を収集
+    2. update_results() で勝敗結果を更新
     """
     start = datetime.now()
     logger.info(f"[scheduler] ジョブ開始: {start.isoformat()}")
     try:
         added = collect_all()
-        logger.info(f"[scheduler] ジョブ完了: 新規 {added} 件")
+        logger.info(f"[scheduler] 収集完了: 新規 {added} 件")
+
+        # 勝敗結果の更新
+        stats = update_results()
+        logger.info(
+            f"[scheduler] 勝敗更新: 決着 {stats['resolved']} 件 / "
+            f"未決着 {stats['unresolved']} 件"
+        )
     except Exception as e:
         logger.exception(f"[scheduler] ジョブ内で例外発生: {e}")
     finally:

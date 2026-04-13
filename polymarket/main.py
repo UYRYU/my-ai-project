@@ -3,6 +3,7 @@ Polymarket Tracker - エントリーポイント
 引数によって動作を切り替える:
   (無し)                        : スケジューラ起動 (定期収集モード)
   --collect                     : 即時1回の取引収集 (日次/週次/全期間の合算)
+  --resolve                     : 勝敗結果を自動更新 (Gamma APIで決着済みマーケットを確認)
   --analyze                     : 分析レポートを表示
   --leaderboard                 : 全ウィンドウ × 全種別のリーダーボード表示
   --leaderboard --window DAY    : 指定ウィンドウのみ (DAY/WEEK/MONTH/ALL)
@@ -35,6 +36,13 @@ def _cmd_analyze() -> None:
     """蓄積データの分析レポート"""
     from analyzer import print_report
     print_report()
+
+
+def _cmd_resolve() -> None:
+    """勝敗結果を自動更新"""
+    from resolver import update_results
+    stats = update_results()
+    print(f"\n決着: {stats['resolved']} 件更新 / 未決着: {stats['unresolved']} 件 / エラー: {stats['errors']} 件\n")
 
 
 def _cmd_leaderboard(window: str = None, board_type: str = None) -> None:
@@ -78,6 +86,11 @@ def main() -> None:
         help="即時1回、全上位者の取引を収集する",
     )
     parser.add_argument(
+        "--resolve",
+        action="store_true",
+        help="勝敗結果を自動更新 (決着済みマーケットをGamma APIで確認)",
+    )
+    parser.add_argument(
         "--analyze",
         action="store_true",
         help="蓄積データの分析レポートを表示する",
@@ -105,6 +118,8 @@ def main() -> None:
 
     if args.collect:
         _cmd_collect()
+    elif args.resolve:
+        _cmd_resolve()
     elif args.analyze:
         _cmd_analyze()
     elif args.leaderboard:
