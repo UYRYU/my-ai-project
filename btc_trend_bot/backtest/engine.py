@@ -184,7 +184,10 @@ class BacktestEngine:
             mark_to_market = capital
             if position is not None:
                 close_price = float(bar["close"])
-                unrealised = (close_price - position.entry_price) * position.size
+                if position.direction == "short":
+                    unrealised = (position.entry_price - close_price) * position.size
+                else:
+                    unrealised = (close_price - position.entry_price) * position.size
                 # Apply remaining-size adjustment for partial exits
                 remaining_frac = position.remaining_size_pct / 100.0
                 unrealised *= remaining_frac
@@ -253,8 +256,11 @@ class BacktestEngine:
         """
         entry_price = signal.entry_price
 
-        # Apply slippage (long entry => price goes up)
-        entry_price *= 1 + self.slippage_pct / 100.0
+        # Apply slippage (long entry => price goes up, short => price goes down)
+        if signal.direction == "short":
+            entry_price *= 1 - self.slippage_pct / 100.0
+        else:
+            entry_price *= 1 + self.slippage_pct / 100.0
 
         # Determine size
         allocation = capital * (self.position_size_pct / 100.0) * self.leverage
@@ -302,11 +308,17 @@ class BacktestEngine:
         """Close *position* and return a trade-log record dict."""
         exit_price = exit_result["exit_price"]
 
-        # Apply slippage (long exit => price goes down)
-        exit_price *= 1 - self.slippage_pct / 100.0
+        # Apply slippage (long exit => price goes down, short exit => up)
+        if position.direction == "short":
+            exit_price *= 1 + self.slippage_pct / 100.0
+        else:
+            exit_price *= 1 - self.slippage_pct / 100.0
 
-        # PnL calculation
-        price_diff = exit_price - position.entry_price
+        # PnL calculation (short: profit when price drops)
+        if position.direction == "short":
+            price_diff = position.entry_price - exit_price
+        else:
+            price_diff = exit_price - position.entry_price
         raw_pnl = price_diff * position.size
 
         # Exit commission

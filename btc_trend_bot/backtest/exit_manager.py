@@ -26,13 +26,14 @@ class Position:
     entry_time: pd.Timestamp
     entry_price: float
     stop_loss: float
-    direction: str  # "long"
+    direction: str  # "long" or "short"
     size: float  # quantity (units of BTC)
     strategy_name: str = ""
     metadata: dict = field(default_factory=dict)
 
     # Tracking fields updated each bar
     highest_price_since_entry: float = 0.0
+    lowest_price_since_entry: float = 0.0
     bars_held: int = 0
 
     # Partial-trail bookkeeping
@@ -42,6 +43,12 @@ class Position:
     def __post_init__(self) -> None:
         if self.highest_price_since_entry == 0.0:
             self.highest_price_since_entry = self.entry_price
+        if self.lowest_price_since_entry == 0.0:
+            self.lowest_price_since_entry = self.entry_price
+
+    @property
+    def is_short(self) -> bool:
+        return self.direction == "short"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +143,8 @@ class ExitManager:
         position.bars_held += 1
         if high > position.highest_price_since_entry:
             position.highest_price_since_entry = high
+        if low < position.lowest_price_since_entry:
+            position.lowest_price_since_entry = low
 
         # --- Breakeven adjustment ---
         if self.breakeven_enabled:
@@ -174,14 +183,14 @@ class ExitManager:
         risk = abs(position.entry_price - position.stop_loss)
         if risk <= 0:
             return
-        current_rr = (position.highest_price_since_entry - position.entry_price) / risk
-        if current_rr >= self.breakeven_after_rr and position.stop_loss < position.entry_price:
-            logger.debug(
-                "Moving SL to breakeven for {} entry={:.2f}",
-                position.strategy_name,
-                position.entry_price,
-            )
-            position.stop_loss = position.entry_price
+        if position.is_short:
+            current_rr = (position.entry_price - position.lowest_price_since_entry) / risk
+            if current_rr >= self.breakeven_after_rr and position.stop_loss > position.entry_price:
+                position.stop_loss = position.entry_price
+        else:
+            current_rr = (position.highest_price_since_entry - position.entry_price) / risk
+            if current_rr >= self.breakeven_after_rr and position.stop_loss < position.entry_price:
+                position.stop_loss = position.entry_price
 
     def _check_stoploss(
         self,
@@ -190,18 +199,23 @@ class ExitManager:
         df_history: pd.DataFrame,
     ) -> Optional[dict]:
         """Evaluate all active SL methods. Returns exit dict or None."""
+        high = float(current_bar["high"])
         low = float(current_bar["low"])
 
         # --- Fixed / ATR stop-loss hit ---
-        if low <= position.stop_loss:
-            exit_price = position.stop_loss
+        if position.is_short:
+            sl_hit = high >= position.stop_loss
+        else:
+            sl_hit = low <= position.stop_loss
+
+        if sl_hit:
             logger.info(
                 "SL hit: strategy={}, entry={:.2f}, sl={:.2f}",
                 position.strategy_name,
                 position.entry_price,
                 position.stop_loss,
             )
-            return {"exit_price": exit_price, "exit_reason": "stop_loss"}
+            return {"exit_price": position.stop_loss, "exit_reason": "stop_loss"}
 
         # --- Time-based exit ---
         if "time_based" in self.sl_methods:
@@ -216,12 +230,18 @@ class ExitManager:
                     "exit_reason": "time_limit",
                 }
 
-        # --- Swing-low SL recalculation (tighten only) ---
+        # --- Swing SL recalculation (tighten only) ---
         if "swing_low" in self.sl_methods and len(df_history) >= self.swing_low_lookback:
-            recent_lows = df_history["low"].iloc[-self.swing_low_lookback:]
-            swing_sl = float(recent_lows.min())
-            if swing_sl > position.stop_loss:
-                position.stop_loss = swing_sl
+            if position.is_short:
+                recent_highs = df_history["high"].iloc[-self.swing_low_lookback:]
+                swing_sl = float(recent_highs.max())
+                if swing_sl < position.stop_loss:
+                    position.stop_loss = swing_sl
+            else:
+                recent_lows = df_history["low"].iloc[-self.swing_low_lookback:]
+                swing_sl = float(recent_lows.min())
+                if swing_sl > position.stop_loss:
+                    position.stop_loss = swing_sl
 
         return None
 
@@ -245,10 +265,14 @@ class ExitManager:
         if risk <= 0:
             return None
 
-        target = position.entry_price + risk * rr_ratio
-        high = float(current_bar["high"])
+        if position.is_short:
+            target = position.entry_price - risk * rr_ratio
+            hit = float(current_bar["low"]) <= target
+        else:
+            target = position.entry_price + risk * rr_ratio
+            hit = float(current_bar["high"]) >= target
 
-        if high >= target:
+        if hit:
             logger.info(
                 "Fixed RR {:.1f} TP hit at {:.2f} for {}",
                 rr_ratio,
@@ -265,7 +289,7 @@ class ExitManager:
         current_bar: pd.Series,
         df_history: pd.DataFrame,
     ) -> Optional[dict]:
-        """ATR trailing stop — only moves up, never down."""
+        """ATR trailing stop — only tightens, never loosens."""
         if position.bars_held < self.atr_trail_warmup:
             return None
 
@@ -273,20 +297,20 @@ class ExitManager:
         if atr is None or atr <= 0:
             return None
 
-        trail_stop = position.highest_price_since_entry - atr * self.atr_trail_mult
-
-        # Only tighten
-        if trail_stop > position.stop_loss:
-            position.stop_loss = trail_stop
-
-        low = float(current_bar["low"])
-        if low <= position.stop_loss:
-            logger.info(
-                "ATR trailing stop hit at {:.2f} for {}",
-                position.stop_loss,
-                position.strategy_name,
-            )
-            return {"exit_price": position.stop_loss, "exit_reason": "atr_trailing"}
+        if position.is_short:
+            trail_stop = position.lowest_price_since_entry + atr * self.atr_trail_mult
+            if trail_stop < position.stop_loss:
+                position.stop_loss = trail_stop
+            high = float(current_bar["high"])
+            if high >= position.stop_loss:
+                return {"exit_price": position.stop_loss, "exit_reason": "atr_trailing"}
+        else:
+            trail_stop = position.highest_price_since_entry - atr * self.atr_trail_mult
+            if trail_stop > position.stop_loss:
+                position.stop_loss = trail_stop
+            low = float(current_bar["low"])
+            if low <= position.stop_loss:
+                return {"exit_price": position.stop_loss, "exit_reason": "atr_trailing"}
 
         return None
 
@@ -296,24 +320,24 @@ class ExitManager:
         current_bar: pd.Series,
         df_history: pd.DataFrame,
     ) -> Optional[dict]:
-        """Exit when price breaks below the lowest low of the last N bars."""
+        """Exit when price breaks the swing level (low for longs, high for shorts)."""
         if len(df_history) < self.swing_low_lookback + 1:
             return None
 
-        # Exclude the current bar so the swing level is based on prior bars
-        recent_lows = df_history["low"].iloc[-(self.swing_low_lookback + 1):-1]
-        swing_level = float(recent_lows.min())
-
-        low = float(current_bar["low"])
-        if low < swing_level:
-            exit_price = max(swing_level, float(current_bar["open"]))
-            logger.info(
-                "Swing-low break at {:.2f} (level={:.2f}) for {}",
-                exit_price,
-                swing_level,
-                position.strategy_name,
-            )
-            return {"exit_price": exit_price, "exit_reason": "swing_low_break"}
+        if position.is_short:
+            recent_highs = df_history["high"].iloc[-(self.swing_low_lookback + 1):-1]
+            swing_level = float(recent_highs.max())
+            high = float(current_bar["high"])
+            if high > swing_level:
+                exit_price = min(swing_level, float(current_bar["open"]))
+                return {"exit_price": exit_price, "exit_reason": "swing_high_break"}
+        else:
+            recent_lows = df_history["low"].iloc[-(self.swing_low_lookback + 1):-1]
+            swing_level = float(recent_lows.min())
+            low = float(current_bar["low"])
+            if low < swing_level:
+                exit_price = max(swing_level, float(current_bar["open"]))
+                return {"exit_price": exit_price, "exit_reason": "swing_low_break"}
 
         return None
 
@@ -338,15 +362,12 @@ class ExitManager:
             )
 
         close = float(current_bar["close"])
-        if close < ema_val:
-            logger.info(
-                "EMA-break exit: close={:.2f} < EMA({})={:.2f} for {}",
-                close,
-                self.ema_break_period,
-                ema_val,
-                position.strategy_name,
-            )
-            return {"exit_price": close, "exit_reason": "ema_break"}
+        if position.is_short:
+            if close > ema_val:
+                return {"exit_price": close, "exit_reason": "ema_break"}
+        else:
+            if close < ema_val:
+                return {"exit_price": close, "exit_reason": "ema_break"}
 
         return None
 
@@ -362,21 +383,21 @@ class ExitManager:
             return None
 
         high = float(current_bar["high"])
+        low = float(current_bar["low"])
 
         # --- Phase 1: first partial TP ---
         if not position.partial_closed:
-            target = position.entry_price + risk * self.partial_first_tp_rr
-            if high >= target:
+            if position.is_short:
+                target = position.entry_price - risk * self.partial_first_tp_rr
+                hit = low <= target
+            else:
+                target = position.entry_price + risk * self.partial_first_tp_rr
+                hit = high >= target
+
+            if hit:
                 position.partial_closed = True
                 position.remaining_size_pct = 100.0 - self.partial_first_tp_pct
-                # Move SL to breakeven for the remaining portion
                 position.stop_loss = position.entry_price
-                logger.info(
-                    "Partial TP ({:.0f}%) at {:.2f} for {}",
-                    self.partial_first_tp_pct,
-                    target,
-                    position.strategy_name,
-                )
                 return {
                     "exit_price": target,
                     "exit_reason": "partial_tp",
@@ -387,23 +408,29 @@ class ExitManager:
         if position.partial_closed:
             atr = self._get_atr(df_history)
             if atr is not None and atr > 0:
-                trail_stop = position.highest_price_since_entry - atr * self.partial_trail_atr_mult
-                if trail_stop > position.stop_loss:
-                    position.stop_loss = trail_stop
+                if position.is_short:
+                    trail_stop = position.lowest_price_since_entry + atr * self.partial_trail_atr_mult
+                    if trail_stop < position.stop_loss:
+                        position.stop_loss = trail_stop
+                else:
+                    trail_stop = position.highest_price_since_entry - atr * self.partial_trail_atr_mult
+                    if trail_stop > position.stop_loss:
+                        position.stop_loss = trail_stop
 
-            low = float(current_bar["low"])
-            if low <= position.stop_loss:
-                logger.info(
-                    "Partial trail stop hit at {:.2f} for {} (remaining {:.0f}%)",
-                    position.stop_loss,
-                    position.strategy_name,
-                    position.remaining_size_pct,
-                )
-                return {
-                    "exit_price": position.stop_loss,
-                    "exit_reason": "partial_trail_stop",
-                    "partial_pct": position.remaining_size_pct,
-                }
+            if position.is_short:
+                if high >= position.stop_loss:
+                    return {
+                        "exit_price": position.stop_loss,
+                        "exit_reason": "partial_trail_stop",
+                        "partial_pct": position.remaining_size_pct,
+                    }
+            else:
+                if low <= position.stop_loss:
+                    return {
+                        "exit_price": position.stop_loss,
+                        "exit_reason": "partial_trail_stop",
+                        "partial_pct": position.remaining_size_pct,
+                    }
 
         return None
 

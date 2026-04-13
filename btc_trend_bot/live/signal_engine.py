@@ -71,6 +71,18 @@ class SignalEngine:
         except ImportError:
             pass
 
+        # Short strategies
+        try:
+            from btc_trend_bot.strategies.trend_short.breakdown_confirmed import BreakdownConfirmedStrategy
+            strategy_map["breakdown_confirmed"] = BreakdownConfirmedStrategy
+        except ImportError:
+            pass
+        try:
+            from btc_trend_bot.strategies.trend_short.multi_tf_trend_hold_short import MultiTFTrendHoldShortStrategy
+            strategy_map["multi_tf_trend_hold_short"] = MultiTFTrendHoldShortStrategy
+        except ImportError:
+            pass
+
         for name in enabled:
             cls = strategy_map.get(name)
             if cls is None:
