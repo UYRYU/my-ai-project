@@ -37,7 +37,12 @@ from btc_trend_bot.live.state_store import StateStore
 
 
 class LiveExecutor:
-    """Live (real-money) executor for a single symbol."""
+    """Live (real-money) executor for a single symbol.
+
+    Supports both long and short directions.  When ``simple_interest``
+    is enabled, position sizing always uses ``initial_capital`` instead
+    of the current (compound) capital.
+    """
 
     def __init__(
         self,
@@ -49,11 +54,13 @@ class LiveExecutor:
         self.config = config
         self.symbol: str = config.get("symbol", "BTCUSDT")
         self.timeframe: str = config.get("timeframe", "1h")
+        self.direction: str = config.get("direction", "long")  # "long" or "short"
         self.initial_capital: float = config.get("initial_capital", 20.0)
         self.capital: float = self.initial_capital
         self.peak_equity: float = self.initial_capital
         self.daily_pnl: float = 0.0
         self.leverage: int = int(config.get("leverage", 2))
+        self.simple_interest: bool = config.get("simple_interest", False)
 
         self.futures = futures_client
         self.min_order_size = float(min_order_size)
@@ -86,12 +93,17 @@ class LiveExecutor:
         self, capital: float, entry: float, stop_loss: float
     ) -> float:
         """Risk-based size in coin units, capped by leverage notional and
-        rounded to the symbol step size."""
+        rounded to the symbol step size.
+
+        When ``simple_interest`` is True, sizing always uses
+        ``initial_capital`` so profits don't compound.
+        """
+        sizing_capital = self.initial_capital if self.simple_interest else capital
         risk_size = self.risk_manager.calc_position_size(
-            capital, entry, stop_loss
+            sizing_capital, entry, stop_loss
         )
         # Cap to leverage-adjusted notional (not just capital/entry)
-        max_notional = capital * self.leverage
+        max_notional = sizing_capital * self.leverage
         max_size = max_notional / entry if entry > 0 else 0.0
         size = min(risk_size, max_size)
         size = self._round_size(size)
@@ -114,8 +126,9 @@ class LiveExecutor:
 
         ex_pos = self.futures.get_position(self.symbol)
         if ex_pos is not None and ex_pos.get("size", 0) > 0:
-            # Still open — nothing to do.
-            return None
+            # Check it's the same direction we care about
+            if ex_pos.get("side", "long") == self.direction:
+                return None  # Still open — nothing to do.
 
         # Position vanished → SL or TP filled on the exchange.
         local = self.position_manager.positions.get(self._open_local_pid)
@@ -151,10 +164,19 @@ class LiveExecutor:
 
     def open_live_position(self, signal) -> bool:
         """Place a live entry order with preset SL/TP and mirror it
-        locally. Returns True on success."""
+        locally. Returns True on success.
+
+        Direction (long/short) is determined by ``self.direction`` which
+        is set at init from the config.
+        """
         if self._open_local_pid is not None:
             logger.debug("[{}] Position already open, skipping signal",
                          self.symbol)
+            return False
+
+        # Only accept signals matching our direction
+        sig_dir = getattr(signal, "direction", "long")
+        if sig_dir != self.direction:
             return False
 
         size = self.calc_live_size(
@@ -162,16 +184,19 @@ class LiveExecutor:
         )
         if size <= 0:
             logger.warning(
-                "[{}] Skipped: computed size below min_order_size "
+                "[{}:{}] Skipped: computed size below min_order_size "
                 "(capital=${:.2f}, entry={:.4f}, sl={:.4f}, min={})",
-                self.symbol, self.capital, signal.entry_price,
-                signal.stop_loss, self.min_order_size,
+                self.symbol, self.direction, self.capital,
+                signal.entry_price, signal.stop_loss, self.min_order_size,
             )
             return False
 
+        # Long opens with BUY, short opens with SELL
+        order_side = OrderSide.SELL if self.direction == "short" else OrderSide.BUY
+
         order = OrderRequest(
             symbol=self.symbol,
-            side=OrderSide.BUY,
+            side=order_side,
             order_type=OrderType.MARKET,
             size=size,
             stop_loss=signal.stop_loss,
@@ -182,13 +207,14 @@ class LiveExecutor:
         try:
             result = self.futures.place_order(order)
         except Exception as exc:
-            logger.error("[{}] place_order failed: {}", self.symbol, exc)
+            logger.error("[{}:{}] place_order failed: {}", self.symbol,
+                         self.direction, exc)
             return False
 
         logger.info(
-            "[{}] LIVE ORDER FILLED: {} size={} entry≈{:.4f} "
+            "[{}:{}] LIVE ORDER FILLED: {} size={} entry≈{:.4f} "
             "SL={:.4f} TP={:.4f} order_id={}",
-            self.symbol, signal.strategy_name, size,
+            self.symbol, self.direction, signal.strategy_name, size,
             signal.entry_price, signal.stop_loss,
             signal.take_profit or 0.0, result.order_id,
         )
@@ -196,7 +222,7 @@ class LiveExecutor:
         # Mirror locally
         pos = self.position_manager.open_position(
             symbol=self.symbol,
-            side="long",
+            side=self.direction,
             entry_price=signal.entry_price,
             size=size,
             stop_loss=signal.stop_loss,
@@ -223,7 +249,10 @@ class LiveExecutor:
         try:
             ex_pos = self.futures.get_position(self.symbol)
             if ex_pos and ex_pos.get("size", 0) > 0:
-                logger.warning("[{}] Emergency closing position", self.symbol)
-                self.futures.close_position(self.symbol, side="long")
+                close_side = ex_pos.get("side", self.direction)
+                logger.warning("[{}:{}] Emergency closing position",
+                               self.symbol, close_side)
+                self.futures.close_position(self.symbol, side=close_side)
         except Exception as exc:
-            logger.error("[{}] Emergency close failed: {}", self.symbol, exc)
+            logger.error("[{}:{}] Emergency close failed: {}",
+                         self.symbol, self.direction, exc)

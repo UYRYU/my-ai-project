@@ -1,15 +1,21 @@
 """
-Multi-Symbol LIVE Trading Runner (REAL MONEY)
-=============================================
-Runs live trading on BTC, ETH, XRP, DOGE, SOL simultaneously from the
-same Bitget USDT-M Futures account.
+Multi-Symbol LIVE Trading Runner — Long + Short (REAL MONEY)
+============================================================
+Runs long AND short strategies on BTC, ETH, XRP, DOGE, SOL simultaneously
+from the same Bitget USDT-M Futures account.
 
-Defaults: $100 total / $20 per coin / 2x leverage / -10% daily kill switch.
+Capital allocation:
+    $100 total → $10 per coin per side (5 coins × 2 sides)
+    Simple interest: position sizing always uses the initial $10 allocation,
+    profits are tracked but NOT compounded into bigger positions.
+
+Defaults: $100 total / 2x leverage / -10% daily kill switch.
 
 USAGE:
     python -m btc_trend_bot.run_multisymbol_live
     python -m btc_trend_bot.run_multisymbol_live --symbols BTCUSDT,ETHUSDT
     python -m btc_trend_bot.run_multisymbol_live --total-capital 100 --interval 300
+    python -m btc_trend_bot.run_multisymbol_live --yes   # skip confirmation
 
 This script REQUIRES typing 'yes' at startup to acknowledge real-money mode.
 """
@@ -37,11 +43,15 @@ from btc_trend_bot.run_multisymbol_backtest import (
     SYMBOL_STRATEGY_OVERRIDES,
     SYMBOL_EXIT_OVERRIDES,
 )
-from btc_trend_bot.run_multisymbol_paper import build_symbol_config, load_config
+from btc_trend_bot.run_multisymbol_backtest_short import (
+    BEST_SHORT_STRATEGY_PER_SYMBOL,
+    SYMBOL_SHORT_STRATEGY_OVERRIDES,
+    SYMBOL_SHORT_EXIT_OVERRIDES,
+)
+from btc_trend_bot.run_multisymbol_paper import load_config
 
 
-# Bitget futures actual minimums (USDT-M perpetual). These override the
-# COIN_CONFIGS values which were tuned for backtests.
+# Bitget futures actual minimums (USDT-M perpetual).
 LIVE_MIN_ORDER_SIZE = {
     "BTCUSDT":  0.0001,
     "ETHUSDT":  0.01,
@@ -60,15 +70,19 @@ LIVE_SIZE_STEP = {
 
 def confirm_live_mode(total_capital: float, leverage: int,
                       symbols: list[str], daily_loss_limit: float) -> bool:
+    n_sides = 2
+    per_coin_side = total_capital / (len(symbols) * n_sides)
     print()
     print("=" * 70)
-    print("  ⚠️  LIVE TRADING MODE — REAL MONEY  ⚠️")
+    print("  ⚠️  LIVE TRADING MODE — REAL MONEY (LONG + SHORT)  ⚠️")
     print("=" * 70)
-    print(f"  Account capital  : ${total_capital:.2f} USDT")
-    print(f"  Per-coin alloc   : ${total_capital / len(symbols):.2f}")
-    print(f"  Leverage         : {leverage}x")
-    print(f"  Symbols          : {', '.join(symbols)}")
-    print(f"  Daily kill-switch: -${daily_loss_limit:.2f} "
+    print(f"  Account capital    : ${total_capital:.2f} USDT")
+    print(f"  Per-coin per-side  : ${per_coin_side:.2f}")
+    print(f"  Leverage           : {leverage}x")
+    print(f"  Symbols            : {', '.join(symbols)}")
+    print(f"  Directions         : LONG + SHORT")
+    print(f"  Sizing mode        : Simple interest (fixed $100)")
+    print(f"  Daily kill-switch  : -${daily_loss_limit:.2f} "
           f"({daily_loss_limit / total_capital * 100:.0f}%)")
     print("=" * 70)
     print()
@@ -103,9 +117,63 @@ def build_futures_client() -> BitgetFuturesClient:
     return BitgetFuturesClient(cfg, live_confirmed=True)
 
 
+def build_symbol_config_directional(
+    base_config: dict,
+    symbol: str,
+    capital_per_coin_side: float,
+    direction: str,
+) -> tuple[dict, str, str]:
+    """Build per-symbol config for a specific direction (long or short)."""
+    cfg = copy.deepcopy(base_config.get("paper_trading", {}))
+
+    if direction == "short":
+        best_strat, best_exit = BEST_SHORT_STRATEGY_PER_SYMBOL.get(
+            symbol, ("breakdown_confirmed", "partial_trail")
+        )
+        strat_overrides = SYMBOL_SHORT_STRATEGY_OVERRIDES
+        exit_overrides = SYMBOL_SHORT_EXIT_OVERRIDES
+    else:
+        best_strat, best_exit = BEST_STRATEGY_PER_SYMBOL.get(
+            symbol, ("breakout_confirmed", "partial_trail")
+        )
+        strat_overrides = SYMBOL_STRATEGY_OVERRIDES
+        exit_overrides = SYMBOL_EXIT_OVERRIDES
+
+    cfg["symbol"] = symbol
+    cfg["direction"] = direction
+    cfg["initial_capital"] = capital_per_coin_side
+    cfg["simple_interest"] = True  # fixed $100 sizing
+    cfg["enabled_strategies"] = [best_strat]
+    cfg["state_file"] = f"data/live_state_{symbol}_{direction}.json"
+
+    # Strategy param overrides
+    strategies = copy.deepcopy(base_config.get("strategies", {}))
+    sym_strat_overrides = strat_overrides.get(symbol, {}).get(best_strat, {})
+    if sym_strat_overrides:
+        strategies.setdefault(best_strat, {}).update(sym_strat_overrides)
+    cfg["strategies"] = strategies
+
+    # Exit overrides
+    exit_cfg = copy.deepcopy(base_config.get("exit", {}))
+    exit_cfg["method"] = best_exit
+    sym_exit_overrides = exit_overrides.get(symbol, {}).get(best_exit, {})
+    if sym_exit_overrides:
+        exit_sub = exit_cfg.get(best_exit, {})
+        exit_sub.update(sym_exit_overrides)
+        exit_cfg[best_exit] = exit_sub
+    cfg["exit"] = exit_cfg
+
+    # Pass through trend detection
+    cfg["trend_detection"] = base_config.get("trend_detection", {})
+
+    return cfg, best_strat, best_exit
+
+
 def main() -> int:
     load_env()
-    parser = argparse.ArgumentParser(description="Multi-Symbol LIVE Trading")
+    parser = argparse.ArgumentParser(
+        description="Multi-Symbol LIVE Trading (Long + Short)"
+    )
     parser.add_argument("--symbols", type=str, default=None)
     parser.add_argument("--interval", type=int, default=300)
     parser.add_argument("--total-capital", type=float, default=100.0)
@@ -127,7 +195,8 @@ def main() -> int:
 
     base_config = load_config(args.config)
     symbols = args.symbols.split(",") if args.symbols else ALL_SYMBOLS
-    capital_per_coin = args.total_capital / len(symbols)
+    n_sides = 2  # long + short
+    capital_per_coin_side = args.total_capital / (len(symbols) * n_sides)
     leverage = args.leverage
     daily_loss_limit = args.total_capital * args.daily_loss_pct / 100.0
 
@@ -151,80 +220,90 @@ def main() -> int:
         logger.error("Failed to connect to Bitget: {}", exc)
         return 2
 
-    # Set leverage and margin mode for each symbol
+    # Set leverage and margin mode for each symbol (both sides)
     for symbol in symbols:
         try:
             futures.set_margin_mode(symbol, "crossed")
         except Exception as exc:
             logger.warning("[{}] set_margin_mode failed: {}", symbol, exc)
-        try:
-            futures.set_leverage(symbol, leverage, side="long")
-            logger.info("[{}] leverage set to {}x", symbol, leverage)
-        except Exception as exc:
-            logger.error("[{}] set_leverage failed: {}", symbol, exc)
+        for side in ["long", "short"]:
+            try:
+                futures.set_leverage(symbol, leverage, side=side)
+                logger.info("[{}] leverage set to {}x ({})", symbol, leverage, side)
+            except Exception as exc:
+                logger.error("[{}] set_leverage({}) failed: {}", symbol, side, exc)
 
-    # Build executors and feeds
+    # Build executors and feeds — keyed as "BTCUSDT:long", "BTCUSDT:short"
     executors: dict[str, LiveExecutor] = {}
     feeds: dict[str, BitgetFeed] = {}
 
     for symbol in symbols:
-        sym_cfg, best_strat, best_exit = build_symbol_config(
-            base_config, symbol, capital_per_coin
-        )
-        sym_cfg["leverage"] = leverage
-        sym_cfg["state_file"] = f"data/live_state_{symbol}.json"
+        for direction in ["long", "short"]:
+            key = f"{symbol}:{direction}"
 
-        logger.info(
-            "[{}] strategy={} exit={} capital=${:.2f}",
-            symbol, best_strat, best_exit, capital_per_coin,
-        )
+            sym_cfg, best_strat, best_exit = build_symbol_config_directional(
+                base_config, symbol, capital_per_coin_side, direction,
+            )
+            sym_cfg["leverage"] = leverage
 
-        executor = LiveExecutor(
-            sym_cfg,
-            futures_client=futures,
-            min_order_size=LIVE_MIN_ORDER_SIZE.get(symbol, 0.001),
-            size_step=LIVE_SIZE_STEP.get(symbol, 0.001),
-        )
-        executors[symbol] = executor
+            logger.info(
+                "[{}:{}] strategy={} exit={} capital=${:.2f} (simple interest)",
+                symbol, direction, best_strat, best_exit, capital_per_coin_side,
+            )
 
-        ex_cfg = copy.deepcopy(base_config.get("exchange", {}))
-        ex_cfg["symbol"] = symbol
-        feed = BitgetFeed(ex_cfg)
-        feed.symbol = symbol
-        feeds[symbol] = feed
+            executor = LiveExecutor(
+                sym_cfg,
+                futures_client=futures,
+                min_order_size=LIVE_MIN_ORDER_SIZE.get(symbol, 0.001),
+                size_step=LIVE_SIZE_STEP.get(symbol, 0.001),
+            )
+            executors[key] = executor
+
+        # One feed per symbol (shared by long & short executors)
+        if symbol not in feeds:
+            ex_cfg = copy.deepcopy(base_config.get("exchange", {}))
+            ex_cfg["symbol"] = symbol
+            feed = BitgetFeed(ex_cfg)
+            feed.symbol = symbol
+            feeds[symbol] = feed
 
     # Initial higher-TF data
-    for symbol, executor in executors.items():
+    for key, executor in executors.items():
+        symbol = key.split(":")[0]
         if executor.signal_engine.needs_higher_tf:
             try:
                 htf = feeds[symbol].get_latest_bars(timeframe="4h", count=500)
                 if not htf.empty:
                     executor.signal_engine.update_higher_tf(htf)
-                    logger.info("[{}] Loaded {} bars of 4h data",
-                                symbol, len(htf))
+                    logger.info("[{}] Loaded {} bars of 4h data", key, len(htf))
             except Exception as exc:
-                logger.error("[{}] 4h fetch failed: {}", symbol, exc)
+                logger.error("[{}] 4h fetch failed: {}", key, exc)
 
     initial_total = args.total_capital
     htf_refresh_counter = 0
     htf_refresh_interval = 4
 
     logger.info("=" * 70)
-    logger.info("LIVE LOOP STARTED — Ctrl+C to stop")
+    logger.info("LIVE LOOP STARTED — Long + Short — Ctrl+C to stop")
+    logger.info(f"  {len(executors)} executors "
+                f"({len(symbols)} symbols × 2 sides) "
+                f"| ${capital_per_coin_side:.2f}/executor")
     logger.info("=" * 70)
 
     try:
         while True:
             cycle_start = time.time()
 
-            for symbol, executor in executors.items():
+            for key, executor in executors.items():
+                symbol = key.split(":")[0]
+                direction = key.split(":")[1]
                 feed = feeds[symbol]
                 try:
                     df = feed.get_latest_bars(
                         timeframe=executor.timeframe, count=500
                     )
                     if df is None or df.empty:
-                        logger.warning("[{}] no data", symbol)
+                        logger.warning("[{}] no data", key)
                         continue
 
                     if (executor.signal_engine.needs_higher_tf
@@ -237,7 +316,7 @@ def main() -> int:
                                 executor.signal_engine.update_higher_tf(htf)
                         except Exception as exc:
                             logger.warning(
-                                "[{}] 4h refresh failed: {}", symbol, exc
+                                "[{}] 4h refresh failed: {}", key, exc
                             )
 
                     current_price = float(df.iloc[-1]["close"])
@@ -247,7 +326,7 @@ def main() -> int:
                     if closed:
                         logger.info(
                             "[{}] CLOSED on exchange: PnL=${:+.2f}",
-                            symbol, closed["pnl"],
+                            key, closed["pnl"],
                         )
 
                     # 2) Look for fresh signal at the latest bar
@@ -259,6 +338,10 @@ def main() -> int:
                             s for s in signals if s.timestamp == latest_bar_time
                         ]
                         for signal in fresh:
+                            # Only take signals matching this executor's direction
+                            sig_dir = getattr(signal, "direction", "long")
+                            if sig_dir != direction:
+                                continue
                             allowed, reason = (
                                 executor.risk_manager.check_trade_allowed(
                                     executor.capital,
@@ -269,11 +352,11 @@ def main() -> int:
                             )
                             if not allowed:
                                 logger.debug(
-                                    "[{}] signal blocked: {}", symbol, reason
+                                    "[{}] signal blocked: {}", key, reason
                                 )
                                 continue
                             executor.open_live_position(signal)
-                            break  # one position per symbol
+                            break  # one position per executor
 
                     executor.state_store.set("capital", executor.capital)
                     executor.state_store.set(
@@ -282,7 +365,7 @@ def main() -> int:
                     executor.state_store.save()
 
                 except Exception as exc:
-                    logger.error("[{}] cycle error: {}", symbol, exc)
+                    logger.error("[{}] cycle error: {}", key, exc)
 
             # Portfolio summary + daily loss kill switch
             total_capital = sum(e.capital for e in executors.values())
@@ -290,18 +373,27 @@ def main() -> int:
             n_open = sum(
                 1 for e in executors.values() if e._open_local_pid is not None
             )
+            n_long_open = sum(
+                1 for k, e in executors.items()
+                if e._open_local_pid is not None and k.endswith(":long")
+            )
+            n_short_open = sum(
+                1 for k, e in executors.items()
+                if e._open_local_pid is not None and k.endswith(":short")
+            )
             logger.info(
-                "--- Portfolio: ${:.2f} ({:+.2f}, {} open) ---",
-                total_capital, total_pnl, n_open,
+                "--- Portfolio: ${:.2f} ({:+.2f}) | "
+                "Open: {} (L:{} S:{}) ---",
+                total_capital, total_pnl, n_open, n_long_open, n_short_open,
             )
 
             if total_pnl <= -daily_loss_limit:
                 logger.error(
-                    "🚨 DAILY LOSS LIMIT HIT (${:+.2f} <= -${:.2f}). "
+                    "DAILY LOSS LIMIT HIT (${:+.2f} <= -${:.2f}). "
                     "Closing all positions and stopping.",
                     total_pnl, daily_loss_limit,
                 )
-                for sym, ex in executors.items():
+                for key, ex in executors.items():
                     ex.emergency_close()
                 break
 
@@ -320,16 +412,16 @@ def main() -> int:
     logger.info("FINAL SUMMARY")
     logger.info("=" * 70)
     total = 0.0
-    for symbol, executor in executors.items():
-        pnl = executor.capital - capital_per_coin
+    for key, executor in sorted(executors.items()):
+        pnl = executor.capital - capital_per_coin_side
         total += executor.capital
         logger.info(
-            "  {:10s}: ${:7.2f} (PnL ${:+.2f})",
-            symbol, executor.capital, pnl,
+            "  {:20s}: ${:7.2f} (PnL ${:+.2f})",
+            key, executor.capital, pnl,
         )
     total_pnl = total - initial_total
     logger.info(
-        "  {:10s}: ${:7.2f} (PnL ${:+.2f}, {:+.2f}%)",
+        "  {:20s}: ${:7.2f} (PnL ${:+.2f}, {:+.2f}%)",
         "TOTAL", total, total_pnl, total_pnl / initial_total * 100,
     )
     return 0
