@@ -70,14 +70,13 @@ LIVE_SIZE_STEP = {
 
 def confirm_live_mode(total_capital: float, leverage: int,
                       symbols: list[str], daily_loss_limit: float) -> bool:
-    n_sides = 2
-    per_coin_side = total_capital / (len(symbols) * n_sides)
+    per_coin = total_capital / len(symbols)
     print()
     print("=" * 70)
     print("  ⚠️  LIVE TRADING MODE — REAL MONEY (LONG + SHORT)  ⚠️")
     print("=" * 70)
     print(f"  Account capital    : ${total_capital:.2f} USDT")
-    print(f"  Per-coin per-side  : ${per_coin_side:.2f}")
+    print(f"  Per-coin (L+S)     : ${per_coin:.2f}")
     print(f"  Leverage           : {leverage}x")
     print(f"  Symbols            : {', '.join(symbols)}")
     print(f"  Directions         : LONG + SHORT")
@@ -195,8 +194,9 @@ def main() -> int:
 
     base_config = load_config(args.config)
     symbols = args.symbols.split(",") if args.symbols else ALL_SYMBOLS
-    n_sides = 2  # long + short
-    capital_per_coin_side = args.total_capital / (len(symbols) * n_sides)
+    # Long and short rarely overlap (uptrend vs downtrend), so each side
+    # gets the full per-coin allocation rather than splitting in half.
+    capital_per_coin_side = args.total_capital / len(symbols)
     leverage = args.leverage
     daily_loss_limit = args.total_capital * args.daily_loss_pct / 100.0
 
