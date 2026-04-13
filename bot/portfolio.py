@@ -182,7 +182,7 @@ FIXED_TRADE_SIZE = float(os.environ.get("FIXED_TRADE_SIZE", "0"))  # 0 = use Kel
 MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.50"))
 MAX_UTILIZATION = float(os.environ.get("MAX_UTILIZATION", "0.80"))
 MAX_PER_MARKET = float(os.environ.get("MAX_PER_MARKET", "0.50"))
-MAX_CONCURRENT_POSITIONS = int(os.environ.get("MAX_CONCURRENT", "10"))
+MAX_CONCURRENT_POSITIONS = int(os.environ.get("MAX_CONCURRENT", "0"))  # 0 = auto (equity / trade size)
 MIN_TRADE_SIZE = float(os.environ.get("MIN_TRADE_SIZE", "5"))  # $5 min for small accounts
 
 
@@ -205,10 +205,16 @@ def calculate_position_size(
                      state.utilization * 100, MAX_UTILIZATION * 100)
         return None
 
-    # 2. Max concurrent positions
-    if len(state.open_positions) >= MAX_CONCURRENT_POSITIONS:
-        logger.info("SKIP: %d open positions >= %d limit",
-                     len(state.open_positions), MAX_CONCURRENT_POSITIONS)
+    # 2. Max concurrent positions (auto-scale with equity)
+    if MAX_CONCURRENT_POSITIONS > 0:
+        max_pos = MAX_CONCURRENT_POSITIONS
+    elif FIXED_TRADE_SIZE > 0:
+        max_pos = max(1, int(equity / FIXED_TRADE_SIZE))
+    else:
+        max_pos = 10
+    if len(state.open_positions) >= max_pos:
+        logger.info("SKIP: %d open positions >= %d limit (equity=$%.0f)",
+                     len(state.open_positions), max_pos, equity)
         return None
 
     # 3. Cash available

@@ -16,7 +16,7 @@ os.environ["FIXED_TRADE_SIZE"] = "50"   # 固定$50/取引 (両ポジ合計)
 os.environ["MIN_TRADE_SIZE"] = "5"      # 最低$5/取引
 os.environ["MAX_SINGLE_TRADE_PCT"] = "0.50"  # 最大50%/取引 = $50
 os.environ["MAX_UTILIZATION"] = "0.90"  # 最大90%稼働
-os.environ["MAX_CONCURRENT"] = "2"      # 最大2ポジション ($50×2=$100)
+os.environ["MAX_CONCURRENT"] = "0"      # 自動: 資金÷$50 = ポジ数 ($100→2, $150→3, $200→4)
 
 from polymarket_arbitrage.models.market import (
     Event, Market, MarketStatus, Token,
