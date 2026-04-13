@@ -14,6 +14,9 @@ env/
 .idea/
 *.swp
 
+# Secrets
+.env
+
 # OS
 .DS_Store
 Thumbs.db
@@ -21,4 +24,7 @@ Thumbs.db
 # Polymarket tracker data
 polymarket/data/trades.csv
 polymarket/data/leaderboards/
+polymarket/data/paper_trades.json
+polymarket/data/paper_pnl.json
+polymarket/data/seen_signals.json
 polymarket/leaderboard.json
