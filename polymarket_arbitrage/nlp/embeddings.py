@@ -4,8 +4,9 @@ The paper uses Linq-Embed-Mistral for generating embeddings to:
 1. Classify markets into topics (Politics, Economy, Tech, Crypto, etc.)
 2. Find semantically similar markets for combinatorial arbitrage candidates.
 
-We use sentence-transformers with a configurable model (default: all-MiniLM-L6-v2
-for lightweight local use; users can switch to a larger model).
+Supports two backends:
+- sentence-transformers (preferred; requires model download from HuggingFace)
+- TF-IDF fallback (no internet needed; uses scikit-learn)
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from datetime import timedelta
 from typing import Optional
 
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import normalize
 
 from polymarket_arbitrage.config import (
     MAX_TEMPORAL_DISTANCE_DAYS,
@@ -27,22 +30,51 @@ logger = logging.getLogger(__name__)
 
 # Lazy-loaded model to avoid import cost when not needed
 _model = None
+_use_tfidf = False
+_tfidf_vectorizer: Optional[TfidfVectorizer] = None
 
 
 def _get_model():
-    global _model
-    if _model is None:
-        from sentence_transformers import SentenceTransformer
-        from polymarket_arbitrage.config import DEFAULT_EMBEDDING_MODEL
-        logger.info("Loading embedding model: %s", DEFAULT_EMBEDDING_MODEL)
-        _model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+    global _model, _use_tfidf
+    if _model is None and not _use_tfidf:
+        try:
+            from sentence_transformers import SentenceTransformer
+            from polymarket_arbitrage.config import DEFAULT_EMBEDDING_MODEL
+            logger.info("Loading embedding model: %s", DEFAULT_EMBEDDING_MODEL)
+            _model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+        except Exception as e:
+            logger.warning(
+                "Cannot load sentence-transformers model (%s). "
+                "Falling back to TF-IDF embeddings.", e,
+            )
+            _use_tfidf = True
     return _model
 
 
 def encode_texts(texts: list[str]) -> np.ndarray:
-    """Encode a list of texts into embedding vectors."""
+    """Encode a list of texts into embedding vectors.
+
+    Uses sentence-transformers if available, otherwise falls back to
+    TF-IDF vectors with L2 normalization (so cosine sim = dot product).
+    """
     model = _get_model()
-    return model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    if model is not None:
+        return model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+
+    # TF-IDF fallback
+    global _tfidf_vectorizer
+    if _tfidf_vectorizer is None:
+        _tfidf_vectorizer = TfidfVectorizer(
+            stop_words="english",
+            max_features=5000,
+            ngram_range=(1, 2),
+            sublinear_tf=True,
+        )
+        vecs = _tfidf_vectorizer.fit_transform(texts).toarray()
+    else:
+        # Re-fit with current corpus for consistency
+        vecs = _tfidf_vectorizer.fit_transform(texts).toarray()
+    return normalize(vecs, norm="l2")
 
 
 def cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -76,8 +108,11 @@ def classify_topics(
 
     questions = [m.question for m in markets]
 
-    topic_embeddings = encode_texts(topics)
-    question_embeddings = encode_texts(questions)
+    # Encode topics and questions together to share vocabulary (for TF-IDF)
+    all_texts = topics + questions
+    all_embeddings = encode_texts(all_texts)
+    topic_embeddings = all_embeddings[: len(topics)]
+    question_embeddings = all_embeddings[len(topics) :]
 
     # similarity: (n_questions, n_topics)
     sim = cosine_similarity_matrix(question_embeddings, topic_embeddings)
