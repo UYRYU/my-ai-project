@@ -7,8 +7,38 @@ from polymarket_arbitrage.api.gamma_client import GammaClient
 
 async def main():
     async with GammaClient() as client:
+        # Try direct markets endpoint
+        print("=== Markets endpoint (last 500) ===")
+        markets = await client.fetch_markets(limit=500, active=True)
+        print(f"Total markets: {len(markets)}")
+
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+
+        for max_min in [10, 30, 60, 240, 1440]:
+            cutoff = now + timedelta(minutes=max_min)
+            short = []
+            for m in markets:
+                if m.end_date is None:
+                    continue
+                end = m.end_date if m.end_date.tzinfo else m.end_date.replace(tzinfo=timezone.utc)
+                if now < end <= cutoff:
+                    short.append(m)
+            print(f"  Resolving within {max_min} min: {len(short)}")
+            for m in short[:3]:
+                print(f"    {m.question[:70]}")
+                print(f"      Vol=${m.volume:,.0f}, end={m.end_date}")
+
+        # Search keywords in market names
+        print(f"\n=== Keyword search in markets ===")
+        for kw in ["BTC", "Bitcoin", "Ethereum", "ETH", "5"]:
+            matches = [m for m in markets if kw.lower() in m.question.lower()]
+            print(f"  '{kw}': {len(matches)} matches")
+            for m in matches[:3]:
+                print(f"    {m.question[:70]}")
+
         events = await client.fetch_all_events(active=True, max_events=500)
-        print(f"Total active events: {len(events)}")
+        print(f"\n=== Events endpoint: {len(events)} ===")
 
         # Find short-term markets
         from datetime import datetime, timezone, timedelta
