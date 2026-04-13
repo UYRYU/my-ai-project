@@ -5,8 +5,8 @@ APIエンドポイント、定数、パスなどを定義
 
 # ===== Polymarket API エンドポイント =====
 
-# リーダーボード取得 (上位トレーダーのランキング)
-LEADERBOARD_URL = "https://data-api.polymarket.com/leaderboard"
+# リーダーボード取得 (v1 エンドポイント)
+LEADERBOARD_URL = "https://data-api.polymarket.com/v1/leaderboard"
 
 # ユーザーのアクティビティ (取引履歴) 取得
 ACTIVITY_URL = "https://data-api.polymarket.com/activity"
@@ -26,27 +26,31 @@ SPORTS_TAGS = ["nba", "nfl", "mlb", "nhl", "sports"]
 # タイトルにこれらの文字列が含まれていればスポーツ関連と判定
 SPORTS_KEYWORDS = ["NBA", "NFL", "MLB", "NHL", "vs", "Will"]
 
-# リーダーボードのウィンドウ (1日/7日/30日/全期間)
-# Polymarket Data-API が公式にサポートする window 値
-WINDOWS = ["1d", "7d", "30d", "all"]
+# リーダーボードのウィンドウ (API パラメータ: timePeriod)
+# Polymarket v1 API がサポートする値: DAY, WEEK, MONTH, ALL
+WINDOWS = ["DAY", "WEEK", "MONTH", "ALL"]
 
 # ウィンドウの表示名 (ログ/レポート用)
 WINDOW_LABELS = {
-    "1d": "日次",
-    "7d": "週次",
-    "30d": "月次",
-    "all": "全期間",
+    "DAY": "日次",
+    "WEEK": "週次",
+    "MONTH": "月次",
+    "ALL": "全期間",
 }
 
-# リーダーボード種別: profit (利益) と volume (取引量)
-LEADERBOARD_TYPES = ["profit", "volume"]
+# リーダーボード種別 (API パラメータ: orderBy)
+# PNL=利益順, VOL=取引量順
+LEADERBOARD_TYPES = ["PNL", "VOL"]
 
 # collect_all で追跡対象とするウィンドウ
-# (全ウィンドウの上位者を合算して追跡。重複は除外)
-TRACK_WINDOWS = ["1d", "7d", "all"]
+TRACK_WINDOWS = ["DAY", "WEEK", "ALL"]
 
 # collect_all で追跡対象とする種別
-TRACK_TYPES = ["profit", "volume"]
+TRACK_TYPES = ["PNL", "VOL"]
+
+# カテゴリフィルタ (API パラメータ: category)
+# OVERALL, POLITICS, SPORTS, CRYPTO, CULTURE, MENTIONS, WEATHER, ECONOMICS, TECH, FINANCE
+LEADERBOARD_CATEGORY = "SPORTS"
 
 
 # ===== データ保存パス =====

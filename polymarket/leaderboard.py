@@ -1,7 +1,9 @@
 """
 Polymarket Tracker - リーダーボード取得モジュール
 上位トレーダーのアドレス・ユーザー名・利益/取引量を取得する。
-window (1d/7d/30d/all) と type (profit/volume) の組み合わせに対応。
+Polymarket v1 API: /v1/leaderboard
+パラメータ: timePeriod (DAY/WEEK/MONTH/ALL), orderBy (PNL/VOL), category, limit, offset
+レスポンスフィールド: rank, proxyWallet, username, vol, pnl, profileImage, xUsername, verified
 """
 
 import json
@@ -35,17 +37,15 @@ def _request_with_retry(url: str, params: dict) -> dict:
             logger.warning(
                 f"[leaderboard] リクエスト失敗 (attempt {attempt}/{config.RETRY_COUNT}): {e}"
             )
-            # 最後の試行でなければ少し待つ
             if attempt < config.RETRY_COUNT:
                 time.sleep(config.RETRY_INTERVAL)
-    # 全てのリトライが失敗
     raise RuntimeError(f"リーダーボード取得に失敗しました: {last_exc}")
 
 
 def _extract_records(data) -> list:
     """
     レスポンスJSONから実際のレコード配列を取り出す。
-    API によって直接リスト / {"data": [...]} / {"leaderboard": [...]} の揺れに対応。
+    v1 API はリストを直接返すが、dict の場合にも対応。
     """
     if isinstance(data, list):
         return data
@@ -56,18 +56,17 @@ def _extract_records(data) -> list:
     return []
 
 
-def _parse_user(item: dict, board_type: str) -> Optional[dict]:
+def _parse_user(item: dict) -> Optional[dict]:
     """
-    APIレスポンスの1レコードから、統一フォーマットのユーザー情報を抽出する。
+    v1 API レスポンスの1レコードから統一フォーマットに変換する。
 
-    Args:
-        item: APIレスポンスの1レコード
-        board_type: "profit" or "volume"
+    v1 API の既知フィールド:
+        rank, proxyWallet, username, vol, pnl, profileImage, xUsername, verified
 
     Returns:
-        {"address": str, "username": str, "profit": float, "volume": float} or None
+        {"address": str, "username": str, "profit": float, "volume": float, "rank": int} or None
     """
-    # APIのフィールド名の揺れに対応
+    # アドレス取得 (v1 は proxyWallet を返す)
     address = (
         item.get("proxyWallet")
         or item.get("address")
@@ -78,99 +77,93 @@ def _parse_user(item: dict, board_type: str) -> Optional[dict]:
     if not address:
         return None
 
+    # ユーザー名
     username = (
-        item.get("name")
-        or item.get("username")
+        item.get("username")
+        or item.get("name")
         or item.get("displayName")
         or item.get("pseudonym")
         or ""
     )
 
-    # profit と volume は別々に取る (どちらかしか無いこともある)
-    profit_raw = (
-        item.get("profit")
-        or item.get("pnl")
-        or item.get("totalPnl")
-        or 0
-    )
-    volume_raw = (
-        item.get("volume")
-        or item.get("totalVolume")
-        or item.get("amount")
-        or 0
-    )
-    # amount フィールドは profit 側に使われることもあるのでフォールバック
-    if board_type == "profit" and not profit_raw:
-        profit_raw = item.get("amount") or 0
-    if board_type == "volume" and not volume_raw:
-        volume_raw = item.get("amount") or 0
+    # PnL (利益)
+    pnl_raw = item.get("pnl") or item.get("profit") or item.get("totalPnl") or 0
+    # Volume (取引量)
+    vol_raw = item.get("vol") or item.get("volume") or item.get("totalVolume") or 0
+    # Rank
+    rank_raw = item.get("rank") or 0
 
     try:
-        profit = float(profit_raw) if profit_raw else 0.0
+        profit = float(pnl_raw)
     except (TypeError, ValueError):
         profit = 0.0
     try:
-        volume = float(volume_raw) if volume_raw else 0.0
+        volume = float(vol_raw)
     except (TypeError, ValueError):
         volume = 0.0
+    try:
+        rank = int(rank_raw)
+    except (TypeError, ValueError):
+        rank = 0
 
     return {
         "address": address,
         "username": username,
         "profit": profit,
         "volume": volume,
+        "rank": rank,
     }
 
 
 def get_leaderboard(
-    window: str = "all",
-    board_type: str = "profit",
+    window: str = "ALL",
+    board_type: str = "PNL",
     limit: Optional[int] = None,
     save: bool = True,
 ) -> List[dict]:
     """
-    Polymarket のリーダーボードを指定ウィンドウ・種別で取得する。
+    Polymarket v1 リーダーボードを取得する。
 
     Args:
-        window: "1d" / "7d" / "30d" / "all"
-        board_type: "profit" (利益順) or "volume" (取引量順)
+        window: "DAY" / "WEEK" / "MONTH" / "ALL"
+        board_type: "PNL" (利益順) or "VOL" (取引量順)
         limit: 取得数。省略時は TOP_N * 2
         save: True なら data/leaderboards/{type}_{window}.json に保存
 
     Returns:
-        List[dict]: 上位 TOP_N 人の {address, username, profit, volume}
+        List[dict]: 上位 TOP_N 人の {address, username, profit, volume, rank}
     """
     label = config.WINDOW_LABELS.get(window, window)
-    logger.info(f"リーダーボード取得中... window={window}({label}) type={board_type}")
+    logger.info(f"リーダーボード取得中... timePeriod={window}({label}) orderBy={board_type}")
 
-    fetch_limit = limit if limit is not None else max(config.TOP_N * 2, 20)
+    fetch_limit = limit if limit is not None else max(config.TOP_N * 2, 25)
 
-    # Polymarket API の想定パラメータ
-    # - limit: 取得件数
-    # - window: 1d / 7d / 30d / all
-    # - type or sortBy: profit / volume (APIの揺れを考慮して両方送る)
+    # Polymarket v1 API パラメータ
     params = {
+        "timePeriod": window,       # DAY / WEEK / MONTH / ALL
+        "orderBy": board_type,      # PNL / VOL
+        "category": config.LEADERBOARD_CATEGORY,  # SPORTS
         "limit": fetch_limit,
-        "window": window,
-        "type": board_type,
-        "sortBy": board_type,
+        "offset": 0,
     }
 
     try:
         data = _request_with_retry(config.LEADERBOARD_URL, params)
     except Exception as e:
-        logger.error(f"リーダーボード取得エラー [window={window}, type={board_type}]: {e}")
+        logger.error(f"リーダーボード取得エラー [timePeriod={window}, orderBy={board_type}]: {e}")
         return []
 
     records = _extract_records(data)
     if not records:
         logger.warning(f"レコードが空 or 予期しない形式: {type(data)}")
+        # デバッグ用にレスポンス冒頭を表示
+        logger.debug(f"レスポンス冒頭: {str(data)[:500]}")
         return []
 
     # 上位 TOP_N 人を抽出
     top_users: List[dict] = []
     for item in records[: config.TOP_N]:
-        parsed = _parse_user(item, board_type)
+        parsed = _parse_user(item)
         if parsed:
             top_users.append(parsed)
 
@@ -190,8 +183,8 @@ def get_leaderboard(
         except Exception as e:
             logger.error(f"保存エラー: {e}")
 
-        # 互換性: window=all & type=profit のときは leaderboard.json にも保存
-        if window == "all" and board_type == "profit":
+        # 互換性: window=ALL & type=PNL のときは leaderboard.json にも保存
+        if window == "ALL" and board_type == "PNL":
             try:
                 with open(config.LEADERBOARD_PATH, "w", encoding="utf-8") as f:
                     json.dump(top_users, f, ensure_ascii=False, indent=2)
@@ -206,10 +199,7 @@ def get_leaderboard(
 def get_all_leaderboards() -> Dict[str, List[dict]]:
     """
     全ウィンドウ × 全種別のリーダーボードを取得する。
-    戻り値のキーは "{type}_{window}" (例: "profit_1d")。
-
-    Returns:
-        dict: {"profit_1d": [...], "profit_7d": [...], ..., "volume_all": [...]}
+    戻り値のキーは "{type}_{window}" (例: "PNL_DAY")。
     """
     results: Dict[str, List[dict]] = {}
     for board_type in config.LEADERBOARD_TYPES:
@@ -234,7 +224,6 @@ def get_tracked_traders() -> List[dict]:
 
     Returns:
         List[dict]: 追跡対象のユーザーリスト (重複なし)
-            各要素に 'sources' として発見元のウィンドウ/種別リストが付く
     """
     seen: Dict[str, dict] = {}
 
@@ -253,7 +242,6 @@ def get_tracked_traders() -> List[dict]:
                     seen[addr]["sources"] = [source_tag]
                 else:
                     seen[addr]["sources"].append(source_tag)
-                    # profit/volume のうち大きい方を採用
                     if u.get("profit", 0) > seen[addr].get("profit", 0):
                         seen[addr]["profit"] = u["profit"]
                     if u.get("volume", 0) > seen[addr].get("volume", 0):
@@ -274,20 +262,20 @@ def print_leaderboard(users: List[dict], title: str = "") -> None:
     if not users:
         print("(データなし)")
         return
-    print(f"{'順位':<6}{'ユーザー名':<22}{'利益(USD)':>16}{'取引量(USD)':>16}  アドレス")
+    print(f"{'#':<5}{'ユーザー名':<22}{'利益(USD)':>16}{'取引量(USD)':>16}  アドレス")
     print("-" * 96)
     for i, u in enumerate(users, 1):
         name = (u.get("username", "") or "(no name)")[:20]
         profit = u.get("profit", 0.0)
         volume = u.get("volume", 0.0)
         addr = u.get("address", "")
-        print(f"{i:<6}{name:<22}{profit:>16,.2f}{volume:>16,.2f}  {addr}")
+        rank = u.get("rank", i)
+        print(f"{rank:<5}{name:<22}{profit:>16,.2f}{volume:>16,.2f}  {addr}")
 
 
 if __name__ == "__main__":
-    # 単体実行時は全ウィンドウを取得して表示
     all_boards = get_all_leaderboards()
     for key, users in all_boards.items():
         board_type, window = key.split("_", 1)
         label = config.WINDOW_LABELS.get(window, window)
-        print_leaderboard(users, title=f"{label} / {board_type.upper()}")
+        print_leaderboard(users, title=f"{label} / {board_type}")

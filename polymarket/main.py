@@ -1,12 +1,12 @@
 """
 Polymarket Tracker - エントリーポイント
 引数によって動作を切り替える:
-  (無し)                      : スケジューラ起動 (定期収集モード)
-  --collect                   : 即時1回の取引収集 (日次/週次/全期間の合算)
-  --analyze                   : 分析レポートを表示
-  --leaderboard               : 全ウィンドウ(日次/週次/月次/全期間)×全種別のリーダーボード表示
-  --leaderboard --window 1d   : 指定ウィンドウのみ表示 (1d/7d/30d/all)
-  --leaderboard --type profit : 指定種別のみ表示 (profit/volume)
+  (無し)                        : スケジューラ起動 (定期収集モード)
+  --collect                     : 即時1回の取引収集 (日次/週次/全期間の合算)
+  --analyze                     : 分析レポートを表示
+  --leaderboard                 : 全ウィンドウ × 全種別のリーダーボード表示
+  --leaderboard --window DAY    : 指定ウィンドウのみ (DAY/WEEK/MONTH/ALL)
+  --leaderboard --type PNL      : 指定種別のみ (PNL/VOL)
 """
 
 import argparse
@@ -41,11 +41,9 @@ def _cmd_leaderboard(window: str = None, board_type: str = None) -> None:
     """
     リーダーボードを取得して表示する。
     引数無しで呼ぶと全ウィンドウ × 全種別を表示。
-    window / board_type を指定すると該当組み合わせのみ表示。
     """
     from leaderboard import get_leaderboard, print_leaderboard
 
-    # 対象ウィンドウ/種別を決定
     windows = [window] if window else config.WINDOWS
     types = [board_type] if board_type else config.LEADERBOARD_TYPES
 
@@ -54,7 +52,7 @@ def _cmd_leaderboard(window: str = None, board_type: str = None) -> None:
         for w in windows:
             users = get_leaderboard(window=w, board_type=bt, save=True)
             label = config.WINDOW_LABELS.get(w, w)
-            title = f"{label} ({w}) / {bt.upper()}"
+            title = f"{label} ({w}) / {bt}"
             print_leaderboard(users, title=title)
             if users:
                 any_data = True
@@ -93,19 +91,18 @@ def main() -> None:
         "--window",
         choices=config.WINDOWS,
         default=None,
-        help="リーダーボードのウィンドウ (1d/7d/30d/all)。省略時は全て表示",
+        help="リーダーボードのウィンドウ (DAY/WEEK/MONTH/ALL)。省略時は全て表示",
     )
     parser.add_argument(
         "--type",
         dest="board_type",
         choices=config.LEADERBOARD_TYPES,
         default=None,
-        help="リーダーボードの種別 (profit/volume)。省略時は両方表示",
+        help="リーダーボードの種別 (PNL/VOL)。省略時は両方表示",
     )
 
     args = parser.parse_args()
 
-    # 排他的に処理 (複数指定された場合は優先順に)
     if args.collect:
         _cmd_collect()
     elif args.analyze:
@@ -113,7 +110,6 @@ def main() -> None:
     elif args.leaderboard:
         _cmd_leaderboard(window=args.window, board_type=args.board_type)
     else:
-        # 引数無しならスケジューラ起動
         _cmd_schedule()
 
 
