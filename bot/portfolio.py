@@ -152,13 +152,14 @@ def kelly_size(
     structurally guaranteed. The main risk is execution failure,
     liquidity issues, or market resolution edge cases.
 
-    We use fractional Kelly (default 25%) for safety.
+    Arb is structurally guaranteed (win prob 97-99%), so we use
+    aggressive fractional Kelly (default 75%).
 
     Args:
         bankroll: available cash
         win_prob: probability the arb succeeds (0.90-0.99)
         win_ratio: profit/cost ratio (e.g., 0.05 for 5% arb)
-        fraction: Kelly fraction (0.25 = quarter Kelly for safety)
+        fraction: Kelly fraction (0.75 = aggressive for arb)
     """
     if win_ratio <= 0 or win_prob <= 0:
         return 0.0
@@ -177,7 +178,7 @@ def kelly_size(
 # ── Position sizing engine ───────────────────────────────────────────
 
 # Risk limits — configurable via env vars for different capital sizes
-MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.15"))
+MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.20"))
 MAX_UTILIZATION = float(os.environ.get("MAX_UTILIZATION", "0.70"))
 MAX_PER_MARKET = float(os.environ.get("MAX_PER_MARKET", "0.10"))
 MAX_CONCURRENT_POSITIONS = int(os.environ.get("MAX_CONCURRENT", "10"))
@@ -244,7 +245,7 @@ def calculate_position_size(
         bankroll=state.available_cash,
         win_prob=win_prob,
         win_ratio=margin,
-        fraction=0.25,  # quarter Kelly
+        fraction=0.75,  # aggressive — arb is structurally guaranteed
     )
 
     # --- Apply hard limits ---
