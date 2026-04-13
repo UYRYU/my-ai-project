@@ -176,11 +176,12 @@ def kelly_size(
 
 # ── Position sizing engine ───────────────────────────────────────────
 
-# Risk limits
-MAX_SINGLE_TRADE_PCT = 0.15    # max 15% of equity in one trade
-MAX_UTILIZATION = 0.70         # max 70% of equity deployed
-MAX_PER_MARKET = 0.10          # max 10% of equity in one market
-MAX_CONCURRENT_POSITIONS = 10  # max 10 open positions
+# Risk limits — configurable via env vars for different capital sizes
+MAX_SINGLE_TRADE_PCT = float(os.environ.get("MAX_SINGLE_TRADE_PCT", "0.15"))
+MAX_UTILIZATION = float(os.environ.get("MAX_UTILIZATION", "0.70"))
+MAX_PER_MARKET = float(os.environ.get("MAX_PER_MARKET", "0.10"))
+MAX_CONCURRENT_POSITIONS = int(os.environ.get("MAX_CONCURRENT", "10"))
+MIN_TRADE_SIZE = float(os.environ.get("MIN_TRADE_SIZE", "5"))  # $5 min for small accounts
 
 
 def calculate_position_size(
@@ -209,8 +210,8 @@ def calculate_position_size(
         return None
 
     # 3. Cash available
-    if state.available_cash < 10.0:  # minimum $10
-        logger.info("SKIP: cash $%.2f < $10 minimum", state.available_cash)
+    if state.available_cash < MIN_TRADE_SIZE:
+        logger.info("SKIP: cash $%.2f < $%.0f minimum", state.available_cash, MIN_TRADE_SIZE)
         return None
 
     # 4. Duplicate check — already have position in same markets?
@@ -257,8 +258,8 @@ def calculate_position_size(
     size = max(size, 0.0)
 
     # Minimum trade size
-    if size < 10.0:
-        logger.info("SKIP: calculated size $%.2f < $10 minimum", size)
+    if size < MIN_TRADE_SIZE:
+        logger.info("SKIP: calculated size $%.2f < $%.0f minimum", size, MIN_TRADE_SIZE)
         return None
 
     return round(size, 2)
