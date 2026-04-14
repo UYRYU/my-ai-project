@@ -106,6 +106,13 @@ def _cmd_paper() -> None:
     print_paper_summary()
 
 
+def _cmd_stats() -> None:
+    """トレーダー別成績を表示"""
+    from trader_stats import print_trader_stats, update_blacklist
+    update_blacklist()
+    print_trader_stats()
+
+
 def _cmd_schedule() -> None:
     from scheduler import run_scheduler
     run_scheduler()
@@ -127,6 +134,8 @@ def main() -> None:
                         help="シグナルスキャン → ベット実行 (ドライラン/ライブ)")
     parser.add_argument("--paper", action="store_true",
                         help="ペーパートレードのサマリーを表示")
+    parser.add_argument("--stats", action="store_true",
+                        help="トレーダー別成績を表示 (ブラックリスト更新も行う)")
     parser.add_argument("--window", choices=config.WINDOWS, default=None,
                         help="リーダーボードのウィンドウ")
     parser.add_argument("--type", dest="board_type",
@@ -147,6 +156,8 @@ def main() -> None:
         _cmd_trade()
     elif args.paper:
         _cmd_paper()
+    elif args.stats:
+        _cmd_stats()
     else:
         _cmd_schedule()
 

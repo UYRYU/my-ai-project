@@ -105,20 +105,24 @@ def _get_current_price(token_id: str) -> Optional[float]:
 def scan_for_signals(users: List[dict]) -> List[dict]:
     """
     上位トレーダーの最新取引をスキャンし、新しいシグナルを検出する。
-
-    Args:
-        users: get_tracked_traders() の結果
-
-    Returns:
-        List[dict]: 新規シグナルのリスト
-            {trader, address, market_id, market_title, outcome, odds, token_id, ...}
+    ブラックリスト (負けトレーダー) は自動で除外する。
     """
+    import trader_stats
+
     seen = _load_seen()
+    blacklist = trader_stats.load_blacklist()
     signals: List[dict] = []
+    skipped_blacklist = 0
 
     for user in users:
         address = user["address"]
         username = user.get("username", "")
+
+        # ブラックリストのトレーダーはスキップ
+        trader_name = username or address
+        if trader_name in blacklist:
+            skipped_blacklist += 1
+            continue
 
         # 最新の取引を少量取得
         try:
@@ -188,7 +192,10 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
             )
 
     _save_seen(seen)
-    logger.info(f"スキャン完了: {len(signals)} 件の新規シグナル")
+    logger.info(
+        f"スキャン完了: {len(signals)} 件の新規シグナル "
+        f"(ブラックリスト {skipped_blacklist} 人スキップ)"
+    )
     return signals
 
 

@@ -27,4 +27,6 @@ polymarket/data/leaderboards/
 polymarket/data/paper_trades.json
 polymarket/data/paper_pnl.json
 polymarket/data/seen_signals.json
+polymarket/data/trader_stats.json
+polymarket/data/trader_blacklist.json
 polymarket/leaderboard.json

@@ -49,7 +49,8 @@ LEADERBOARD_TYPES = ["PNL", "VOL"]
 TRACK_WINDOWS = ["DAY", "WEEK", "ALL"]
 
 # collect_all で追跡対象とする種別
-TRACK_TYPES = ["PNL", "VOL"]
+# PNL (利益順) のみに絞る。VOL は取引量が多いだけで勝ってない人も混ざるため除外。
+TRACK_TYPES = ["PNL"]
 
 # カテゴリフィルタ (API パラメータ: category)
 # OVERALL, POLITICS, SPORTS, CRYPTO, CULTURE, MENTIONS, WEATHER, ECONOMICS, TECH, FINANCE
