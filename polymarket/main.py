@@ -113,6 +113,12 @@ def _cmd_stats() -> None:
     print_trader_stats()
 
 
+def _cmd_behavior() -> None:
+    """上位者の行動パターン分析 (保有 vs 早期利確, エントリー, 分割など)"""
+    from behavior import run_analysis
+    run_analysis()
+
+
 def _cmd_schedule() -> None:
     from scheduler import run_scheduler
     run_scheduler()
@@ -136,6 +142,8 @@ def main() -> None:
                         help="ペーパートレードのサマリーを表示")
     parser.add_argument("--stats", action="store_true",
                         help="トレーダー別成績を表示 (ブラックリスト更新も行う)")
+    parser.add_argument("--behavior", action="store_true",
+                        help="日次/週次/月次の上位3人の行動パターンを分析")
     parser.add_argument("--window", choices=config.WINDOWS, default=None,
                         help="リーダーボードのウィンドウ")
     parser.add_argument("--type", dest="board_type",
@@ -158,6 +166,8 @@ def main() -> None:
         _cmd_paper()
     elif args.stats:
         _cmd_stats()
+    elif args.behavior:
+        _cmd_behavior()
     else:
         _cmd_schedule()
 
