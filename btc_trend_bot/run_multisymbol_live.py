@@ -27,6 +27,7 @@ import sys
 import time
 from pathlib import Path
 
+import pandas as pd
 import yaml
 from loguru import logger
 
@@ -66,6 +67,39 @@ LIVE_SIZE_STEP = {
     "DOGEUSDT": 1.0,
     "SOLUSDT":  0.01,
 }
+
+
+# Timeframe string → pandas offset for forming-bar detection
+_TIMEFRAME_DURATIONS = {
+    "1m": pd.Timedelta(minutes=1),
+    "5m": pd.Timedelta(minutes=5),
+    "15m": pd.Timedelta(minutes=15),
+    "30m": pd.Timedelta(minutes=30),
+    "1h": pd.Timedelta(hours=1),
+    "4h": pd.Timedelta(hours=4),
+    "1d": pd.Timedelta(days=1),
+}
+
+
+def drop_forming_bar(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Drop the last bar if it is still forming (end time in the future).
+
+    Bitget's candles endpoint returns the current in-progress bar as the
+    most recent entry, which causes the live signal engine's "latest-bar"
+    filter to miss confirmed signals (signal is at bar N-1 but latest
+    is at bar N which is forming).
+    """
+    if df is None or df.empty:
+        return df
+    bar_dur = _TIMEFRAME_DURATIONS.get(timeframe)
+    if bar_dur is None:
+        return df
+    now = pd.Timestamp.now(tz="UTC")
+    last_bar_start = df.index[-1]
+    # If last bar's end is still in the future, it's forming → drop it
+    if last_bar_start + bar_dur > now:
+        return df.iloc[:-1]
+    return df
 
 
 def confirm_live_mode(total_capital: float, leverage: int,
@@ -273,6 +307,7 @@ def main() -> int:
         if executor.signal_engine.needs_higher_tf:
             try:
                 htf = feeds[symbol].get_latest_bars(timeframe="4h", count=500)
+                htf = drop_forming_bar(htf, "4h")
                 if not htf.empty:
                     executor.signal_engine.update_higher_tf(htf)
                     logger.info("[{}] Loaded {} bars of 4h data", key, len(htf))
@@ -306,12 +341,20 @@ def main() -> int:
                         logger.warning("[{}] no data", key)
                         continue
 
+                    # Drop the last bar if it's still forming so the
+                    # signal-engine's "latest-bar" filter matches confirmed
+                    # signals.
+                    df = drop_forming_bar(df, executor.timeframe)
+                    if df.empty:
+                        continue
+
                     if (executor.signal_engine.needs_higher_tf
                             and htf_refresh_counter >= htf_refresh_interval):
                         try:
                             htf = feed.get_latest_bars(
                                 timeframe="4h", count=500
                             )
+                            htf = drop_forming_bar(htf, "4h")
                             if not htf.empty:
                                 executor.signal_engine.update_higher_tf(htf)
                         except Exception as exc:
