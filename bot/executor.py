@@ -118,11 +118,45 @@ async def execute_arb(opp: ArbitrageOpportunity) -> bool:
 
         if success:
             record_entry(state, opp, size)
+            # Auto-merge to immediately reclaim capital (no wait for resolution)
+            await _auto_merge(opp, size)
             print_dashboard(state)
         return success
     except Exception as e:
         logger.error("Execution failed: %s", e)
         return False
+
+
+async def _auto_merge(opp: ArbitrageOpportunity, size: float) -> None:
+    """Merge complete set immediately → reclaim capital."""
+    try:
+        from bot.merger import merge_complete_set
+    except ImportError:
+        return
+
+    is_negrisk = opp.arb_type == ArbitrageType.NEGRISK_INTRA
+    condition_id = opp.markets[0].condition_id
+    if not condition_id:
+        logger.warning("No condition_id — skipping auto-merge")
+        return
+
+    # Amount = number of shares in the complete set (size / price_sum)
+    # For NegRisk LONG: size / sum_yes
+    # For single LONG: size / (yes + no)
+    shares = size / opp.price_sum
+    amount_wei = int(shares * 1_000_000)  # USDC 6 decimals
+
+    logger.info("AUTO-MERGE: %.2f shares of %s (negrisk=%s)",
+                shares, condition_id[:12] + "...", is_negrisk)
+    ok = await merge_complete_set(condition_id, amount_wei, neg_risk=is_negrisk)
+    if ok:
+        # Immediately mark position as closed (capital returned)
+        pos = next((p for p in _state.positions if p.status == "open"
+                    and condition_id in p.market_ids[0]), None)
+        if pos:
+            from bot.portfolio import record_exit
+            record_exit(_state, pos.id, actual_payout=size + size * opp.net_profit_per_dollar)
+            logger.info("AUTO-MERGE complete: capital recycled")
 
 
 async def _execute_negrisk(client, opp: ArbitrageOpportunity, size: float) -> bool:
