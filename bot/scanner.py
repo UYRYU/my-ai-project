@@ -40,6 +40,9 @@ MAX_EVENTS = int(os.environ.get("MAX_EVENTS", "500"))             # cap per scan
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")                   # Discord/Telegram
 LOG_DIR = Path(os.environ.get("LOG_DIR", "bot_logs"))
 
+# Fast mode: focus on 5-min crypto markets only
+FAST_MODE = os.environ.get("FAST_MODE", "1") == "1"
+
 # Focus on short-duration markets (5-min crypto). Set 0 to disable.
 MAX_DURATION_MIN = int(os.environ.get("MAX_DURATION_MIN", "0"))   # max minutes until resolution
 
@@ -137,6 +140,9 @@ def _log_opportunity(opp: ArbitrageOpportunity) -> None:
 
 async def scan_once(client: GammaClient) -> list[ArbitrageOpportunity]:
     """Run one full scan cycle."""
+    if FAST_MODE:
+        return await scan_5min_crypto()
+
     # Fetch active events
     events = await client.fetch_all_events(active=True, max_events=MAX_EVENTS)
     events = _filter_liquid(events)
@@ -151,6 +157,24 @@ async def scan_once(client: GammaClient) -> list[ArbitrageOpportunity]:
     # Filter by minimum profit
     opps = [o for o in opps if o.net_profit_per_dollar >= MIN_PROFIT]
 
+    return opps
+
+
+async def scan_5min_crypto() -> list[ArbitrageOpportunity]:
+    """Fast scan: fetch 7 crypto 5-min markets in parallel."""
+    from bot.fast_scanner import fetch_all_5min_markets
+    markets = await fetch_all_5min_markets()
+    if not markets:
+        return []
+
+    opps = detect_single_condition_arbitrage(markets)
+    opps = [o for o in opps if o.net_profit_per_dollar >= MIN_PROFIT]
+
+    logger.info(
+        "FAST scan: %d coins fetched, %d with arb (sums: %s)",
+        len(markets), len(opps),
+        ", ".join(f"{m.slug.split('-')[0]}={m.price_sum:.3f}" for m in markets),
+    )
     return opps
 
 

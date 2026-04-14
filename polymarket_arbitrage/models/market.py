@@ -63,14 +63,14 @@ class Market:
     @property
     def yes_price(self) -> Optional[float]:
         for t in self.tokens:
-            if t.outcome.lower() == "yes":
+            if t.outcome.lower() in ("yes", "up"):
                 return t.price
         return None
 
     @property
     def no_price(self) -> Optional[float]:
         for t in self.tokens:
-            if t.outcome.lower() == "no":
+            if t.outcome.lower() in ("no", "down"):
                 return t.price
         return None
 
