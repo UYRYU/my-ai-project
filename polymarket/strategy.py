@@ -2,8 +2,12 @@
 Polymarket Tracker - シグナル検出モジュール
 上位トレーダーの新規ベットを検知し、コピートレードのシグナルを生成する。
 
-戦略: 低オッズ穴狙い (0.05〜0.50)
-根拠: データ分析で低オッズ帯の勝率が40.4% (期待値プラス) であることを確認済み
+戦略 (behavior_deep.py のデータ分析結果に基づく):
+  - オッズ帯 0.35-0.75 のみ (0.1-0.25は ROI -19% なので除外)
+  - Spread系マーケットは除外 (大負けが集中)
+  - 分割エントリー可能 (上位者は平均38回買う)
+  - 最後まで保有 (上位者の95%)
+  - ブラックリストのトレーダーはスキップ (負けてる人)
 """
 
 import json
@@ -16,6 +20,26 @@ from loguru import logger
 
 import config
 import risk
+
+
+# 上位負けTop5のうち4件がSpread系だったため除外
+# 例: "Spread: Rockets (-4.5)", "Spread: Warriors (-14.5)"
+EXCLUDE_KEYWORDS = [
+    "SPREAD:",
+    "(-",      # ハンディキャップ表記 (-X.5)
+    "(+",      # ハンディキャップ表記 (+X.5)
+]
+
+
+def _is_excluded_market(title: str) -> bool:
+    """除外すべきマーケット (Spread系など) かチェック"""
+    if not title:
+        return False
+    upper = title.upper()
+    for kw in EXCLUDE_KEYWORDS:
+        if kw in upper:
+            return True
+    return False
 
 
 # 過去に検知済みのシグナルを記録するファイル
@@ -165,8 +189,13 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
             except (TypeError, ValueError):
                 continue
 
-            # 戦略フィルタ: 穴狙いのみ (0.05〜0.50)
+            # 戦略フィルタ: オッズ 0.35〜0.75 の中〜本命寄り
             if price < risk.MIN_ODDS or price > risk.MAX_ODDS:
+                continue
+
+            # Spread系は除外 (大負けTop5のうち4件がSpread)
+            if _is_excluded_market(title):
+                logger.debug(f"  Spread系を除外: {title[:40]}")
                 continue
 
             # 重複チェック

@@ -17,14 +17,28 @@ from loguru import logger
 
 
 # ===== リスク設定 =====
+# データ分析結果 (behavior_deep.py) に基づくパラメータ
+#
+# 上位者のオッズ帯別ROI:
+#   0.1-0.25: -19.1% (避ける)
+#   0.25-0.4: +13.7%
+#   0.4-0.6 : +20.2% ← 主戦場
+#   0.6-0.8 : +30.1% ← 最高ROI
+#
+# 上位者の実サイズ: 中央値$34K (大口)
+# → $100口座は比率で約1/6000 → 1ベット$5〜10が妥当
+
 BANKROLL = 100.0           # 口座残高 ($)
-BET_SIZE_MIN = 2.0         # 最小ベットサイズ ($)
-BET_SIZE_DEFAULT = 3.0     # デフォルトベットサイズ ($)
-BET_SIZE_MAX = 5.0         # 最大ベットサイズ ($)
-MAX_DAILY_LOSS = 15.0      # 1日の最大損失 ($)
+BET_SIZE_MIN = 3.0         # 最小ベットサイズ ($)
+BET_SIZE_DEFAULT = 5.0     # デフォルトベットサイズ ($)
+BET_SIZE_MAX = 10.0        # 最大ベットサイズ ($)
+MAX_DAILY_LOSS = 20.0      # 1日の最大損失 ($) - 20%まで
 MAX_POSITIONS = 5           # 最大同時ポジション数
-MIN_ODDS = 0.05            # 最低オッズ (これ以下は無視)
-MAX_ODDS = 0.50            # 最大オッズ (穴狙い戦略: 0.5以下のみ)
+
+# データが示す最適オッズ帯: 0.4-0.8
+# 0.1-0.25の穴狙いはROI-19%なので除外
+MIN_ODDS = 0.35            # 最低オッズ
+MAX_ODDS = 0.75            # 最大オッズ
 
 # ペーパートレード記録ファイル
 PAPER_TRADES_PATH = "data/paper_trades.json"
@@ -95,7 +109,12 @@ def can_open_position() -> tuple:
 def calculate_bet_size(odds: float) -> float:
     """
     オッズに応じたベットサイズを計算する。
-    低オッズ (穴) ほど小さく、確信度が高いほど大きく。
+    データ分析 (behavior_deep.py) でROIが高いオッズ帯ほど厚く張る。
+
+    ROIデータ:
+      0.4-0.6: +20.2% → 主戦場なので多めに
+      0.6-0.8: +30.1% → 最高ROIなので最大
+      0.35-0.4, それ以外: ディフェンシブに
 
     Args:
         odds: 0.0〜1.0
@@ -103,14 +122,12 @@ def calculate_bet_size(odds: float) -> float:
     Returns:
         ベットサイズ ($)
     """
-    if odds <= 0.2:
-        return BET_SIZE_MIN       # $2 (大穴)
-    elif odds <= 0.35:
-        return BET_SIZE_DEFAULT   # $3 (中穴)
-    elif odds <= 0.5:
-        return BET_SIZE_MAX       # $5 (やや穴)
+    if 0.6 <= odds <= 0.75:
+        return BET_SIZE_MAX       # $10 (最高ROI帯)
+    elif 0.4 <= odds < 0.6:
+        return BET_SIZE_DEFAULT   # $5 (主戦場)
     else:
-        return BET_SIZE_DEFAULT   # $3
+        return BET_SIZE_MIN       # $3 (エッジ)
 
 
 def record_paper_trade(
