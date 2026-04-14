@@ -119,6 +119,12 @@ def _cmd_behavior() -> None:
     run_analysis()
 
 
+def _cmd_deep_behavior() -> None:
+    """行動分析の深掘り (スポーツ/サイズ/オッズ帯別成績/P&L分布)"""
+    from behavior_deep import run_deep_analysis
+    run_deep_analysis(skip_timing=True)  # タイミング分析はAPIが重いのでskip
+
+
 def _cmd_schedule() -> None:
     from scheduler import run_scheduler
     run_scheduler()
@@ -144,6 +150,8 @@ def main() -> None:
                         help="トレーダー別成績を表示 (ブラックリスト更新も行う)")
     parser.add_argument("--behavior", action="store_true",
                         help="日次/週次/月次の上位3人の行動パターンを分析")
+    parser.add_argument("--deep", action="store_true",
+                        help="行動分析の深掘り (スポーツ/サイズ/オッズ帯別成績)")
     parser.add_argument("--window", choices=config.WINDOWS, default=None,
                         help="リーダーボードのウィンドウ")
     parser.add_argument("--type", dest="board_type",
@@ -168,6 +176,8 @@ def main() -> None:
         _cmd_stats()
     elif args.behavior:
         _cmd_behavior()
+    elif args.deep:
+        _cmd_deep_behavior()
     else:
         _cmd_schedule()
 
