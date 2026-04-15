@@ -317,6 +317,21 @@ def main() -> int:
     initial_total = args.total_capital
     htf_refresh_counter = 0
     htf_refresh_interval = 4
+    # Track the last bar time processed per executor to fire on signals
+    # that appeared since the previous poll.  Initialize to the current
+    # latest bar so we don't immediately fire on historical signals.
+    last_processed: dict[str, pd.Timestamp] = {}
+    for key, executor in executors.items():
+        symbol = key.split(":")[0]
+        try:
+            df0 = feeds[symbol].get_latest_bars(
+                timeframe=executor.timeframe, count=5
+            )
+            df0 = drop_forming_bar(df0, executor.timeframe)
+            if not df0.empty:
+                last_processed[key] = df0.index[-1]
+        except Exception:
+            pass
 
     logger.info("=" * 70)
     logger.info("LIVE LOOP STARTED — Long + Short — Ctrl+C to stop")
@@ -372,19 +387,28 @@ def main() -> int:
                             key, closed["pnl"],
                         )
 
-                    # 2) Look for fresh signal at the latest bar
+                    # 2) Look for new signals since the last poll
                     has_open = executor._open_local_pid is not None
+                    latest_bar_time = df.index[-1]
                     if not has_open:
-                        signals = executor.signal_engine.process_bar(df)
-                        latest_bar_time = df.index[-1]
-                        fresh = [
-                            s for s in signals if s.timestamp == latest_bar_time
+                        since = last_processed.get(key)
+                        new_signals = executor.signal_engine.process_bar_since(
+                            df, since=since,
+                        )
+                        # Only take signals matching this executor's direction,
+                        # and only from the last 3 bars so we don't fire on
+                        # stale signals after long downtime.
+                        cutoff = latest_bar_time - 3 * _TIMEFRAME_DURATIONS.get(
+                            executor.timeframe, pd.Timedelta(hours=1)
+                        )
+                        new_signals = [
+                            s for s in new_signals
+                            if getattr(s, "direction", "long") == direction
+                            and s.timestamp >= cutoff
                         ]
-                        for signal in fresh:
-                            # Only take signals matching this executor's direction
-                            sig_dir = getattr(signal, "direction", "long")
-                            if sig_dir != direction:
-                                continue
+                        # Sort by timestamp descending (newest first) and take one
+                        new_signals.sort(key=lambda s: s.timestamp, reverse=True)
+                        for signal in new_signals[:1]:
                             allowed, reason = (
                                 executor.risk_manager.check_trade_allowed(
                                     executor.capital,
@@ -398,8 +422,14 @@ def main() -> int:
                                     "[{}] signal blocked: {}", key, reason
                                 )
                                 continue
+                            logger.info(
+                                "[{}] Acting on signal @ {} (last_processed={})",
+                                key, signal.timestamp, since,
+                            )
                             executor.open_live_position(signal)
-                            break  # one position per executor
+                            break
+                    # Update last-processed marker regardless
+                    last_processed[key] = latest_bar_time
 
                     executor.state_store.set("capital", executor.capital)
                     executor.state_store.set(

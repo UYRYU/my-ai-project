@@ -187,6 +187,44 @@ class SignalEngine:
 
         return all_signals
 
+    def process_bar_since(
+        self,
+        df: pd.DataFrame,
+        since: Optional[pd.Timestamp] = None,
+        precomputed: bool = False,
+    ) -> list[Signal]:
+        """Return all signals with timestamp > ``since`` (or all if None).
+
+        Unlike :meth:`process_bar` which only returns signals at the very
+        latest bar, this method is used by the live runner which polls
+        every few minutes and may miss the one-poll window where a bar's
+        signal equals the exact latest bar.  By returning all signals
+        newer than the last processed bar, we catch signals regardless
+        of poll timing.
+        """
+        if len(df) < self.min_bars:
+            return []
+
+        df_featured = df if precomputed else self.fe.add_all_features(df)
+
+        all_signals: list[Signal] = []
+        for strategy in self.strategies:
+            try:
+                signals = strategy.generate_signals(df_featured)
+                if not signals:
+                    continue
+                if since is not None:
+                    signals = [s for s in signals if s.timestamp > since]
+                all_signals.extend(signals)
+            except Exception as exc:
+                logger.error(
+                    "Strategy '{}' raised an error: {}",
+                    strategy.name,
+                    exc,
+                )
+
+        return all_signals
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
