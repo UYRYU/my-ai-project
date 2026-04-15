@@ -318,18 +318,22 @@ def main() -> int:
     htf_refresh_counter = 0
     htf_refresh_interval = 4
     # Track the last bar time processed per executor to fire on signals
-    # that appeared since the previous poll.  Initialize to the current
-    # latest bar so we don't immediately fire on historical signals.
+    # that appeared since the previous poll.  Initialize to 1 bar before
+    # the current latest so we can act on a signal that just landed on
+    # the most-recent closed bar right after startup.
     last_processed: dict[str, pd.Timestamp] = {}
     for key, executor in executors.items():
         symbol = key.split(":")[0]
+        bar_dur = _TIMEFRAME_DURATIONS.get(
+            executor.timeframe, pd.Timedelta(hours=1)
+        )
         try:
             df0 = feeds[symbol].get_latest_bars(
                 timeframe=executor.timeframe, count=5
             )
             df0 = drop_forming_bar(df0, executor.timeframe)
             if not df0.empty:
-                last_processed[key] = df0.index[-1]
+                last_processed[key] = df0.index[-1] - bar_dur
         except Exception:
             pass
 
