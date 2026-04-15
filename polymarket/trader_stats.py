@@ -16,7 +16,20 @@ import risk
 # トレーダー成績の評価設定
 MIN_TRADES_TO_EVAL = 5       # これ以上のトレード数があれば評価対象
 MIN_WIN_RATE = 0.30          # これ未満の勝率ならブラックリスト
+MIN_TRADES_FOR_WHITELIST = 3 # ホワイトリストに入れる最低トレード数
+MIN_WHITELIST_WIN_RATE = 0.60  # ホワイトリスト入りの勝率閾値
+
+# 明らかに負けてるトレーダーの手動ブラックリスト (診断結果ベース)
+# 自動判定より先に除外するもの
+MANUAL_BLACKLIST = {
+    "RN1",           # 9回参加 / 44.4% / -$11.45
+    "swisstony",     # 5回参加 / 40.0% / -$8.11
+    "bossoskil1",    # 2回参加 / 0%   / -$8.00
+    "elkmonkey",     # 2回参加 / 0%   / -$8.00
+}
+
 BLACKLIST_PATH = "data/trader_blacklist.json"
+WHITELIST_PATH = "data/trader_whitelist.json"
 STATS_PATH = "data/trader_stats.json"
 
 
@@ -77,12 +90,13 @@ def compute_trader_stats() -> Dict[str, dict]:
 def update_blacklist() -> Set[str]:
     """
     負けてるトレーダーをブラックリストに追加する。
+    手動ブラックリスト + 自動判定 (BAD) の和集合。
 
     Returns:
         ブラックリストに載っているトレーダー名のセット
     """
     stats = compute_trader_stats()
-    blacklist: Set[str] = set()
+    blacklist: Set[str] = set(MANUAL_BLACKLIST)  # 手動分を先に入れる
 
     for trader, s in stats.items():
         if s["verdict"] == "BAD":
@@ -95,20 +109,61 @@ def update_blacklist() -> Set[str]:
     return blacklist
 
 
+def update_whitelist() -> Set[str]:
+    """
+    勝ってるトレーダーをホワイトリスト化する。
+    ホワイトリストのトレーダーはコンセンサス待たずに即発火対象。
+
+    条件: MIN_TRADES_FOR_WHITELIST (=3) 件以上決着 &
+          勝率 MIN_WHITELIST_WIN_RATE (=60%) 以上 & 損益プラス
+    """
+    stats = compute_trader_stats()
+    whitelist: Set[str] = set()
+
+    for trader, s in stats.items():
+        if (
+            s["decided"] >= MIN_TRADES_FOR_WHITELIST
+            and s["win_rate"] >= MIN_WHITELIST_WIN_RATE
+            and s["pnl"] > 0
+            and trader not in MANUAL_BLACKLIST
+        ):
+            whitelist.add(trader)
+
+    with open(WHITELIST_PATH, "w", encoding="utf-8") as f:
+        json.dump(sorted(list(whitelist)), f, indent=2, ensure_ascii=False)
+
+    return whitelist
+
+
 def load_blacklist() -> Set[str]:
-    """ブラックリストを読み込む"""
-    if not os.path.exists(BLACKLIST_PATH):
+    """ブラックリストを読み込む (手動分を常に含む)"""
+    result = set(MANUAL_BLACKLIST)
+    if os.path.exists(BLACKLIST_PATH):
+        try:
+            with open(BLACKLIST_PATH, "r", encoding="utf-8") as f:
+                result |= set(json.load(f))
+        except Exception:
+            pass
+    return result
+
+
+def load_whitelist() -> Set[str]:
+    """ホワイトリスト (即発火対象) を読み込む"""
+    if not os.path.exists(WHITELIST_PATH):
         return set()
     try:
-        with open(BLACKLIST_PATH, "r", encoding="utf-8") as f:
+        with open(WHITELIST_PATH, "r", encoding="utf-8") as f:
             return set(json.load(f))
     except Exception:
         return set()
 
 
 def is_blacklisted(trader: str) -> bool:
-    """指定トレーダーがブラックリストに載っているか"""
     return trader in load_blacklist()
+
+
+def is_whitelisted(trader: str) -> bool:
+    return trader in load_whitelist()
 
 
 def print_trader_stats() -> None:
@@ -117,6 +172,12 @@ def print_trader_stats() -> None:
     if not stats:
         print("\nペーパートレード記録がありません\n")
         return
+
+    # ホワイトリスト/ブラックリストを最新化
+    update_blacklist()
+    update_whitelist()
+    whitelist = load_whitelist()
+    blacklist = load_blacklist()
 
     # 判定で分類、負け損益順でソート
     sorted_items = sorted(
@@ -134,8 +195,13 @@ def print_trader_stats() -> None:
         name = (trader[:20] + "..") if len(trader) > 22 else trader
         win_rate = f"{s['win_rate']*100:.1f}%" if s["decided"] > 0 else "-"
         verdict = s["verdict"]
-        # 色分け (verdict)
         mark = {"GOOD": "✓", "BAD": "✗", "NOT_ENOUGH_DATA": "?"}.get(verdict, "-")
+        # WL / BL タグ
+        tag = ""
+        if trader in whitelist:
+            tag = " 🌟WL"
+        elif trader in blacklist:
+            tag = " 🚫BL"
         print(
             f"{name:<22}"
             f"{s['total']:>5}"
@@ -144,7 +210,7 @@ def print_trader_stats() -> None:
             f"{s['open']:>5}"
             f"{win_rate:>8}"
             f"{s['pnl']:>+10.2f}  "
-            f"{mark} {verdict}"
+            f"{mark} {verdict}{tag}"
         )
 
     # サマリー
@@ -160,4 +226,5 @@ def print_trader_stats() -> None:
 
 if __name__ == "__main__":
     update_blacklist()
+    update_whitelist()
     print_trader_stats()

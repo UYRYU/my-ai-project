@@ -59,11 +59,13 @@ def _job_signal() -> None:
         if resolved:
             logger.info(f"[signal] ペーパートレード {resolved} 件決済")
 
-        # ブラックリストを更新 (負けてるトレーダーを自動除外)
-        from trader_stats import update_blacklist
+        # ブラックリスト / ホワイトリストを更新
+        from trader_stats import update_blacklist, update_whitelist
         blacklist = update_blacklist()
-        if blacklist:
-            logger.info(f"[signal] ブラックリスト: {len(blacklist)} 人")
+        whitelist = update_whitelist()
+        logger.info(
+            f"[signal] BL: {len(blacklist)} 人 / WL: {len(whitelist)} 人"
+        )
 
         # 追跡対象を取得 (キャッシュされたリーダーボードを使う)
         users = get_tracked_traders()

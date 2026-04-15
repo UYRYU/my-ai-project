@@ -29,6 +29,7 @@ polymarket/data/paper_pnl.json
 polymarket/data/seen_signals.json
 polymarket/data/trader_stats.json
 polymarket/data/trader_blacklist.json
+polymarket/data/trader_whitelist.json
 polymarket/data/behavior_analysis.json
 polymarket/data/deep_behavior.json
 polymarket/data/pending_signals.json

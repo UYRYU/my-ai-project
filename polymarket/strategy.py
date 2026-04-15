@@ -31,21 +31,30 @@ PENDING_CLEANUP_HOURS = 24      # これ以上古い pending は削除
 
 # ===== 除外パターン =====
 # 上位負けTop5のうち4件がSpread系だったため除外
+# また、ペーパートレードで O/U (Over/Under) は全敗だったため除外
 EXCLUDE_KEYWORDS = [
     "SPREAD:",
-    "(-",      # ハンディキャップ表記 (-X.5)
-    "(+",      # ハンディキャップ表記 (+X.5)
+    "(-",           # ハンディキャップ表記 (-X.5)
+    "(+",           # ハンディキャップ表記 (+X.5)
+    "O/U ",         # Over/Under マーケット (ペーパーで全敗)
+    ": O/U",
 ]
 
+# outcome が OVER/UNDER のものは除外
+EXCLUDE_OUTCOMES = {"OVER", "UNDER"}
 
-def _is_excluded_market(title: str) -> bool:
-    """除外すべきマーケット (Spread系など) かチェック"""
+
+def _is_excluded_market(title: str, outcome: str = "") -> bool:
+    """除外すべきマーケット (Spread系 / O/U系) かチェック"""
     if not title:
         return False
     upper = title.upper()
     for kw in EXCLUDE_KEYWORDS:
         if kw in upper:
             return True
+    # Outcome が OVER/UNDER なら除外
+    if outcome and outcome.strip().upper() in EXCLUDE_OUTCOMES:
+        return True
     return False
 
 
@@ -190,6 +199,10 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
     pending = _cleanup_old_pending(pending)
     fired = _load_fired()
     blacklist = trader_stats.load_blacklist()
+    whitelist = trader_stats.load_whitelist()
+
+    # 即時発火したシグナル (ホワイトリスト単独ベット)
+    immediate_signals: List[dict] = []
 
     skipped_blacklist = 0
     new_votes = 0
@@ -259,7 +272,7 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
             # フィルタ適用
             if price < risk.MIN_ODDS or price > risk.MAX_ODDS:
                 continue
-            if _is_excluded_market(title):
+            if _is_excluded_market(title, outcome):
                 continue
 
             key = _make_consensus_key(market_id, outcome)
@@ -288,8 +301,29 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
             pending[key] = entry
             new_votes += 1
 
+            # ★ ホワイトリストのトレーダーは単独でも即発火
+            if trader_name in whitelist and key not in fired:
+                logger.info(
+                    f"[WHITELIST即発火] {trader_name}: {outcome} @ {price:.3f} | {title[:50]}"
+                )
+                immediate_signals.append({
+                    "trader": trader_name,
+                    "traders": [trader_name],
+                    "vote_count": 1,
+                    "fire_reason": "WHITELIST",
+                    "market_id": market_id,
+                    "market_title": title,
+                    "outcome": outcome,
+                    "trader_odds": price,
+                    "token_id": None,
+                })
+                fired.add(key)
+                # pending からも削除
+                if key in pending:
+                    del pending[key]
+
     # --- ステップ2: コンセンサスが成立したシグナルを抽出 ---
-    signals = []
+    signals = list(immediate_signals)  # ホワイトリスト即発火分を先に入れる
     for key, entry in list(pending.items()):
         # 時間窓内の投票のみカウント
         recent_votes = [
@@ -339,9 +373,11 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
 
     logger.info(
         f"スキャン完了: 新規投票 {new_votes} 件 | "
-        f"コンセンサス発火 {len(signals)} 件 | "
+        f"即発火 {len(immediate_signals)} 件 (WL) | "
+        f"合計発火 {len(signals)} 件 | "
         f"保留中 {total_pending_markets} 件 (単独 {pending_single}) | "
-        f"BL除外 {skipped_blacklist} 人"
+        f"BL除外 {skipped_blacklist} 人 | "
+        f"WL {len(whitelist)} 人"
     )
     return signals
 
