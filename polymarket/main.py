@@ -128,7 +128,13 @@ def _cmd_deep_behavior() -> None:
 def _cmd_pending() -> None:
     """保留中のコンセンサスシグナルを表示"""
     from strategy import print_pending_signals
-    print_pending_signals()  # タイミング分析はAPIが重いのでskip
+    print_pending_signals()
+
+
+def _cmd_diagnose() -> None:
+    """ペーパートレードの診断 (どこで負けてるか内訳)"""
+    from diagnose import print_diagnosis
+    print_diagnosis()  # タイミング分析はAPIが重いのでskip
 
 
 def _cmd_schedule() -> None:
@@ -160,6 +166,8 @@ def main() -> None:
                         help="行動分析の深掘り (スポーツ/サイズ/オッズ帯別成績)")
     parser.add_argument("--pending", action="store_true",
                         help="保留中のコンセンサスシグナルを表示")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="ペーパートレードの診断 (どこで負けてるか)")
     parser.add_argument("--window", choices=config.WINDOWS, default=None,
                         help="リーダーボードのウィンドウ")
     parser.add_argument("--type", dest="board_type",
@@ -188,6 +196,8 @@ def main() -> None:
         _cmd_deep_behavior()
     elif args.pending:
         _cmd_pending()
+    elif args.diagnose:
+        _cmd_diagnose()
     else:
         _cmd_schedule()
 
