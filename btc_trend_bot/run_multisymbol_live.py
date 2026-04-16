@@ -405,14 +405,23 @@ def main() -> int:
                         cutoff = latest_bar_time - 3 * _TIMEFRAME_DURATIONS.get(
                             executor.timeframe, pd.Timedelta(hours=1)
                         )
-                        new_signals = [
+                        matching_dir = [
                             s for s in new_signals
                             if getattr(s, "direction", "long") == direction
-                            and s.timestamp >= cutoff
                         ]
+                        in_window = [
+                            s for s in matching_dir if s.timestamp >= cutoff
+                        ]
+                        if new_signals:
+                            logger.debug(
+                                "[{}] signals={} | dir_match={} | in_window={} "
+                                "(since={}, cutoff={})",
+                                key, len(new_signals), len(matching_dir),
+                                len(in_window), since, cutoff,
+                            )
                         # Sort by timestamp descending (newest first) and take one
-                        new_signals.sort(key=lambda s: s.timestamp, reverse=True)
-                        for signal in new_signals[:1]:
+                        in_window.sort(key=lambda s: s.timestamp, reverse=True)
+                        for signal in in_window[:1]:
                             allowed, reason = (
                                 executor.risk_manager.check_trade_allowed(
                                     executor.capital,
@@ -422,15 +431,38 @@ def main() -> int:
                                 )
                             )
                             if not allowed:
-                                logger.debug(
-                                    "[{}] signal blocked: {}", key, reason
+                                logger.warning(
+                                    "[{}] signal @{} BLOCKED: {}",
+                                    key, signal.timestamp, reason,
+                                )
+                                continue
+                            # Pre-check size so we know why it would fail
+                            test_size = executor.calc_live_size(
+                                executor.capital,
+                                signal.entry_price,
+                                signal.stop_loss,
+                            )
+                            if test_size <= 0:
+                                logger.warning(
+                                    "[{}] signal @{} BLOCKED: size=0 "
+                                    "(capital=${:.2f}, entry={:.4f}, "
+                                    "sl={:.4f}, min={})",
+                                    key, signal.timestamp,
+                                    executor.capital, signal.entry_price,
+                                    signal.stop_loss, executor.min_order_size,
                                 )
                                 continue
                             logger.info(
-                                "[{}] Acting on signal @ {} (last_processed={})",
-                                key, signal.timestamp, since,
+                                "[{}] ACTING on signal @{} size={} "
+                                "(last_processed={})",
+                                key, signal.timestamp, test_size, since,
                             )
-                            executor.open_live_position(signal)
+                            ok = executor.open_live_position(signal)
+                            if ok:
+                                logger.success(
+                                    "[{}] ENTRY CONFIRMED @{}",
+                                    key, signal.timestamp,
+                                )
                             break
                     # Update last-processed marker regardless
                     last_processed[key] = latest_bar_time
