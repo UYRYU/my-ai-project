@@ -122,6 +122,11 @@ class BitgetFuturesClient:
                 else:
                     resp = self._session.post(url, data=body_str, headers=headers, timeout=30)
 
+                if resp.status_code >= 400:
+                    logger.error(
+                        "Bitget HTTP {} | path={} body_sent={} response={}",
+                        resp.status_code, endpoint, body_str, resp.text[:500],
+                    )
                 resp.raise_for_status()
                 result = resp.json()
 
