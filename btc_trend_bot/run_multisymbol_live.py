@@ -314,7 +314,7 @@ def main() -> int:
             except Exception as exc:
                 logger.error("[{}] 4h fetch failed: {}", key, exc)
 
-    initial_total = args.total_capital
+    initial_total = sum(e.initial_capital for e in executors.values())
     htf_refresh_counter = 0
     htf_refresh_interval = 4
     # Track the last bar time processed per executor to fire on signals
