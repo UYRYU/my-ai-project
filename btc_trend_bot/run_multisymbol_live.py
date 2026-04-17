@@ -333,7 +333,7 @@ def main() -> int:
             )
             df0 = drop_forming_bar(df0, executor.timeframe)
             if not df0.empty:
-                last_processed[key] = df0.index[-1] - bar_dur
+                last_processed[key] = df0.index[-1] - 12 * bar_dur
         except Exception:
             pass
 
@@ -402,7 +402,7 @@ def main() -> int:
                         # Only take signals matching this executor's direction,
                         # and only from the last 3 bars so we don't fire on
                         # stale signals after long downtime.
-                        cutoff = latest_bar_time - 3 * _TIMEFRAME_DURATIONS.get(
+                        cutoff = latest_bar_time - 12 * _TIMEFRAME_DURATIONS.get(
                             executor.timeframe, pd.Timedelta(hours=1)
                         )
                         matching_dir = [
@@ -422,6 +422,15 @@ def main() -> int:
                         # Sort by timestamp descending (newest first) and take one
                         in_window.sort(key=lambda s: s.timestamp, reverse=True)
                         for signal in in_window[:1]:
+                            price_drift = abs(current_price - signal.entry_price) / signal.entry_price * 100
+                            if price_drift > 5.0:
+                                logger.warning(
+                                    "[{}] signal @{} SKIPPED: price drifted "
+                                    "{:.1f}% (entry={:.4f}, now={:.4f})",
+                                    key, signal.timestamp, price_drift,
+                                    signal.entry_price, current_price,
+                                )
+                                continue
                             allowed, reason = (
                                 executor.risk_manager.check_trade_allowed(
                                     executor.capital,
