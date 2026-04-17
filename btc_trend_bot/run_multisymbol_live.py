@@ -67,6 +67,13 @@ LIVE_SIZE_STEP = {
     "DOGEUSDT": 1.0,
     "SOLUSDT":  0.01,
 }
+LIVE_PRICE_DECIMALS = {
+    "BTCUSDT":  1,
+    "ETHUSDT":  2,
+    "XRPUSDT":  4,
+    "DOGEUSDT": 5,
+    "SOLUSDT":  2,
+}
 
 
 # Timeframe string → pandas offset for forming-bar detection
@@ -290,6 +297,7 @@ def main() -> int:
                 futures_client=futures,
                 min_order_size=LIVE_MIN_ORDER_SIZE.get(symbol, 0.001),
                 size_step=LIVE_SIZE_STEP.get(symbol, 0.001),
+                price_decimals=LIVE_PRICE_DECIMALS.get(symbol, 2),
             )
             executors[key] = executor
 

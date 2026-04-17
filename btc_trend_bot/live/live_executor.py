@@ -50,6 +50,7 @@ class LiveExecutor:
         futures_client: BitgetFuturesClient,
         min_order_size: float,
         size_step: float,
+        price_decimals: int = 2,
     ) -> None:
         self.config = config
         self.symbol: str = config.get("symbol", "BTCUSDT")
@@ -65,6 +66,7 @@ class LiveExecutor:
         self.futures = futures_client
         self.min_order_size = float(min_order_size)
         self.size_step = float(size_step)
+        self.price_decimals = price_decimals
 
         # Reuse the existing signal / position / risk infrastructure.
         # PositionManager here mirrors exchange state for tracking only;
@@ -194,13 +196,16 @@ class LiveExecutor:
         # Long opens with BUY, short opens with SELL
         order_side = OrderSide.SELL if self.direction == "short" else OrderSide.BUY
 
+        sl = round(signal.stop_loss, self.price_decimals) if signal.stop_loss else None
+        tp = round(signal.take_profit, self.price_decimals) if signal.take_profit else None
+
         order = OrderRequest(
             symbol=self.symbol,
             side=order_side,
             order_type=OrderType.MARKET,
             size=size,
-            stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit,
+            stop_loss=sl,
+            take_profit=tp,
             leverage=self.leverage,
         )
 
