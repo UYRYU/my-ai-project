@@ -56,30 +56,36 @@ SYMBOL_SHORT_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
     # BTC: mtf_short with default strat params (s0) is best
     "ETHUSDT": {
         "breakdown_confirmed": {
-            "adx_min": 18,
+            "adx_min": 16,
             "bar_strength_min": 0.6,
+            "volume_mult": 1.1,
+            "cooldown_bars": 3,
         },
     },
     "XRPUSDT": {
         "breakdown_confirmed": {
-            "adx_min": 18,
+            "adx_min": 16,
             "bar_strength_min": 0.6,
+            "volume_mult": 1.1,
+            "cooldown_bars": 3,
         },
     },
     "DOGEUSDT": {
         "breakdown_confirmed": {
-            "adx_min": 18,
-            "volume_mult": 1.1,
+            "adx_min": 16,
+            "volume_mult": 1.0,
             "atr_sl_mult": 2.0,
             "bar_strength_min": 0.6,
+            "cooldown_bars": 3,
         },
     },
     "SOLUSDT": {
         "breakdown_confirmed": {
-            "adx_min": 18,
-            "volume_mult": 1.1,
+            "adx_min": 16,
+            "volume_mult": 1.0,
             "atr_sl_mult": 2.0,
             "bar_strength_min": 0.6,
+            "cooldown_bars": 3,
         },
     },
 }

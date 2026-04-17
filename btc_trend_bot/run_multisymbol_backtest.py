@@ -45,30 +45,26 @@ ALL_SYMBOLS = list(COIN_CONFIGS.keys())
 # ---------------------------------------------------------------
 SYMBOL_STRATEGY_OVERRIDES: dict[str, dict[str, dict]] = {
     "XRPUSDT": {
-        # XRP: win/loss ratio=1.01 is the problem, not entry quality
-        # Keep entries mostly the same, fix via exit params
         "breakout_confirmed": {
-            "volume_mult": 1.4,       # 1.3→1.4: slightly stricter volume
-            "atr_sl_mult": 2.0,       # 2.5→2.0: tighter SL = better R:R
+            "volume_mult": 1.2,
+            "atr_sl_mult": 2.0,
         },
         "reacceleration_quality": {
-            "adx_min": 22,            # 20→22: slightly stricter
+            "adx_min": 18,
         },
     },
     "ETHUSDT": {
-        # ETH: reacceleration needs loosening for more signals
         "reacceleration_quality": {
-            "pre_trend_bars": 10,     # 20→10: don't require 20 bars of EMA alignment
-            "squeeze_lookback": 7,    # 5→7: wider squeeze detection window
-            "trend_strength_min": 0.3, # 0.4→0.3: accept weaker trends
-            "adx_min": 18,            # 20→18: lower threshold
-            "range_break_pct": 0.3,   # 0.5→0.3: accept smaller breaks
+            "pre_trend_bars": 10,
+            "squeeze_lookback": 7,
+            "trend_strength_min": 0.3,
+            "adx_min": 16,
+            "range_break_pct": 0.3,
         },
-        # ETH breakout: tighter entry quality + tighter SL for better R:R
         "breakout_confirmed": {
-            "volume_mult": 1.3,       # keep original - quality > quantity
-            "atr_sl_mult": 1.8,       # 2.5→1.8: tighter SL = more risk/reward
-            "cooldown_bars": 3,       # 5→3: faster re-entry OK for ETH
+            "volume_mult": 1.1,
+            "atr_sl_mult": 1.8,
+            "cooldown_bars": 3,
         },
     },
 }
