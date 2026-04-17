@@ -4,3 +4,7 @@ reports/
 
 # Secrets
 .env
+
+# Runtime state (created by paper/live executors)
+btc_trend_bot/data/paper_state_*.json
+btc_trend_bot/data/live_state_*.json
