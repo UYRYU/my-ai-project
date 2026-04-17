@@ -134,7 +134,20 @@ def _cmd_pending() -> None:
 def _cmd_diagnose() -> None:
     """ペーパートレードの診断 (どこで負けてるか内訳)"""
     from diagnose import print_diagnosis
-    print_diagnosis()  # タイミング分析はAPIが重いのでskip
+    print_diagnosis()
+
+
+def _cmd_tune() -> None:
+    """自動チューニング (除外帯・除外スポーツの自動判定)"""
+    from auto_tune import run_auto_tune, print_tune_status
+    run_auto_tune()
+    print_tune_status()
+
+
+def _cmd_report() -> None:
+    """今日の日次レポートを表示 (同時にファイル保存)"""
+    from daily_report import print_today
+    print_today()
 
 
 def _cmd_schedule() -> None:
@@ -168,6 +181,10 @@ def main() -> None:
                         help="保留中のコンセンサスシグナルを表示")
     parser.add_argument("--diagnose", action="store_true",
                         help="ペーパートレードの診断 (どこで負けてるか)")
+    parser.add_argument("--tune", action="store_true",
+                        help="自動チューニングを即実行 (除外帯・除外スポーツ)")
+    parser.add_argument("--report", action="store_true",
+                        help="今日の日次レポートを表示・保存")
     parser.add_argument("--window", choices=config.WINDOWS, default=None,
                         help="リーダーボードのウィンドウ")
     parser.add_argument("--type", dest="board_type",
@@ -198,6 +215,10 @@ def main() -> None:
         _cmd_pending()
     elif args.diagnose:
         _cmd_diagnose()
+    elif args.tune:
+        _cmd_tune()
+    elif args.report:
+        _cmd_report()
     else:
         _cmd_schedule()
 

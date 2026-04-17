@@ -34,4 +34,10 @@ polymarket/data/behavior_analysis.json
 polymarket/data/deep_behavior.json
 polymarket/data/pending_signals.json
 polymarket/data/fired_consensus.json
+polymarket/data/blocked_bands.json
+polymarket/data/blocked_sports.json
+polymarket/data/auto_tune_log.json
+polymarket/data/daily_reports/
+polymarket/data/scheduler.log
+polymarket/data/watchdog.log
 polymarket/leaderboard.json

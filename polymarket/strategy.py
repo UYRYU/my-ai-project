@@ -275,6 +275,13 @@ def scan_for_signals(users: List[dict]) -> List[dict]:
             if _is_excluded_market(title, outcome):
                 continue
 
+            # 自動チューニングで除外されたオッズ帯/スポーツもスキップ
+            import auto_tune
+            if auto_tune.is_blocked_odds(price):
+                continue
+            if auto_tune.is_blocked_sport(title):
+                continue
+
             key = _make_consensus_key(market_id, outcome)
 
             # 既に発火済みならスキップ
