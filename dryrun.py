@@ -1,10 +1,8 @@
 """
-期間別ドライラン (Multi-Period Dry Run)
-  4つの相場レジーム × 各3ヶ月分 (M1相当) をシミュレート
-  - Period A: 強い上昇トレンド  (2020年コロナ後ラリー風)
-  - Period B: 高ボラ・チョッピー (2022年利上げ相場風)
-  - Period C: レンジ相場        (2023年前半風)
-  - Period D: 緩やかな上昇      (2024年直近風)
+期間別ドライラン (手数料感度分析版)
+  4レジーム × 5コスト水準 でクロス検証
+  コスト = スプレッド(片道) + 往復コミッション
+  XAUUSD 0.01lot:  スプレッド20pts=$0.20, コミッション$3.5/lot=$0.035/0.01lot
 """
 
 import numpy as np
@@ -22,13 +20,25 @@ BEST_PARAMS = {
     "TRAILING_ON": True, "CLOSE_ON_SIGNAL": True,
     "MAX_CONSEC_LOSS": 3, "COOLDOWN_BARS": 30,
     "RSI_PERIOD": 14, "ATR_PERIOD": 14,
-    "LOT_SIZE": 0.01, "MAX_SPREAD": 50,
+    "LOT_SIZE": 0.01, "MAX_SPREAD": 500,  # 上限を高めに (各シナリオで個別設定)
     "SPREAD_POINTS": 20, "POINT": 0.01, "LOT_VALUE": 1.0,
 }
 
 INITIAL_CAPITAL  = 1000.0
 M1_BARS_PER_YEAR = 298_080
-BARS_PER_PERIOD  = 99_000   # 約69日 × 3 ≒ 約3ヶ月分
+BARS_PER_PERIOD  = 99_000   # 約69日分
+
+# ── コストシナリオ (スプレッド pts + 往復コミッション $) ────────────
+# XAUUSD 0.01lot 参考値:
+#   ECN口座: スプレッド15pts + コミッション$7/lot → 往復=$0.07+$0.15=$0.22
+#   標準口座: スプレッド30〜50pts、コミッションなし
+COST_SCENARIOS = {
+    "① 超低コスト  (spread=15pts, comm=$0.00)": {"spread_pts": 15,  "commission": 0.000},
+    "② ECN標準    (spread=15pts, comm=$0.07)": {"spread_pts": 15,  "commission": 0.035},
+    "③ 標準口座   (spread=30pts, comm=$0.00)": {"spread_pts": 30,  "commission": 0.000},
+    "④ 高コスト   (spread=50pts, comm=$0.07)": {"spread_pts": 50,  "commission": 0.035},
+    "⑤ 最悪ケース (spread=80pts, comm=$0.10)": {"spread_pts": 80,  "commission": 0.050},
+}
 
 # ── 相場レジーム定義 ─────────────────────────────────────────────
 PERIODS = {
@@ -101,12 +111,13 @@ def atr_ind(hi, lo, cl, p):
 class Pos:
     direction: str; open_price: float; sl: float; tp: float; open_bar: int
 
-def backtest(closes, highs, lows, p) -> List[float]:
+def backtest(closes, highs, lows, p, commission: float = 0.0) -> List[float]:
     ef = ema(closes, p["EMA_FAST"]); es = ema(closes, p["EMA_SLOW"])
     rs = rsi_ind(closes, p["RSI_PERIOD"])
     at = atr_ind(highs, lows, closes, p["ATR_PERIOD"])
     PT = p["POINT"]; LV = p["LOT_VALUE"]; LS = p["LOT_SIZE"]
     SPR = p["SPREAD_POINTS"]*PT; warm = p["EMA_SLOW"]+p["RSI_PERIOD"]+5
+    COMM = commission * 2  # 往復コミッション
     pos: Optional[Pos] = None; trades=[]; consec=0; cooldown=0
 
     for i in range(warm, len(closes)):
@@ -123,11 +134,11 @@ def backtest(closes, highs, lows, p) -> List[float]:
         if pos:
             res=None
             if pos.direction=="buy":
-                if lows[i]<=pos.sl:   res=(pos.sl-pos.open_price)/PT*LV*LS
-                elif highs[i]>=pos.tp: res=(pos.tp-pos.open_price)/PT*LV*LS
+                if lows[i]<=pos.sl:   res=(pos.sl-pos.open_price)/PT*LV*LS - COMM
+                elif highs[i]>=pos.tp: res=(pos.tp-pos.open_price)/PT*LV*LS - COMM
             else:
-                if highs[i]>=pos.sl:  res=(pos.open_price-pos.sl)/PT*LV*LS
-                elif lows[i]<=pos.tp:  res=(pos.open_price-pos.tp)/PT*LV*LS
+                if highs[i]>=pos.sl:  res=(pos.open_price-pos.sl)/PT*LV*LS - COMM
+                elif lows[i]<=pos.tp:  res=(pos.open_price-pos.tp)/PT*LV*LS - COMM
             if res is not None:
                 trades.append(res); consec=consec+1 if res<0 else 0
                 if consec>=p["MAX_CONSEC_LOSS"]: cooldown=i+p["COOLDOWN_BARS"]; consec=0
@@ -140,12 +151,12 @@ def backtest(closes, highs, lows, p) -> List[float]:
         if pos:
             if p["CLOSE_ON_SIGNAL"]:
                 if pos.direction=="buy" and sell:
-                    r=(bid-pos.open_price)/PT*LV*LS; trades.append(r)
+                    r=(bid-pos.open_price)/PT*LV*LS - COMM; trades.append(r)
                     consec=consec+1 if r<0 else 0
                     if consec>=p["MAX_CONSEC_LOSS"]: cooldown=i+p["COOLDOWN_BARS"]; consec=0
                     pos=None
                 elif pos.direction=="sell" and buy:
-                    r=(pos.open_price-ask)/PT*LV*LS; trades.append(r)
+                    r=(pos.open_price-ask)/PT*LV*LS - COMM; trades.append(r)
                     consec=consec+1 if r<0 else 0
                     if consec>=p["MAX_CONSEC_LOSS"]: cooldown=i+p["COOLDOWN_BARS"]; consec=0
                     pos=None
@@ -170,86 +181,103 @@ def stats(trades, n_bars):
             "n":len(t),"ann":ann,"mdd":mdd,"cal":cal}
 
 # ── レポート ─────────────────────────────────────────────────────
-def verdict(ann):
-    if ann >= 100: return "★★★ 優秀"
-    if ann >= 30:  return "★★  良好"
-    if ann >= 0:   return "★   プラス"
-    return              "✗   マイナス"
+def cell(ann):
+    if ann is None:   return "    ──   "
+    if ann >=  100:   return f"\033[32m{ann:>+7.0f}%\033[0m"   # 緑
+    if ann >=    0:   return f"\033[33m{ann:>+7.0f}%\033[0m"   # 黄
+    return                   f"\033[31m{ann:>+7.0f}%\033[0m"   # 赤
 
-def print_report(results: dict):
+def print_cross_table(matrix: dict, period_names: list, cost_names: list):
+    W = 74
     print()
-    print("╔" + "═"*70 + "╗")
-    print("║  期間別ドライラン結果  (パラメータ: optimize.py 最優秀値)" + " "*13 + "║")
-    print("║  初期資金 $1,000 / 0.01ロット / スプレッド20pts固定" + " "*18 + "║")
-    print("╠" + "═"*70 + "╣")
-    print(f"║  {'期間':<28} {'年利(推定)':>10} {'最大DD':>7} {'PF':>5} {'勝率':>6} {'N':>5} {'評価':>10} ║")
-    print("╠" + "═"*70 + "╣")
+    print("=" * W)
+    print("  手数料感度分析 — 年利(推定)クロス表")
+    print(f"  初期資金 $1,000 / 0.01ロット / ※合成データ推計値")
+    print("=" * W)
 
-    total_net = 0
-    all_trades = []
-    for name, st in results.items():
-        label = name.split('\n')[0]  # 1行目だけ使う
-        if st:
-            total_net += st["net"]
-            bar = "▓" * min(int(abs(st["ann"]) / 50), 12)
-            sign = "+" if st["ann"] >= 0 else ""
-            v = verdict(st["ann"])
-            print(f"║  {label:<26} {sign}{st['ann']:>8.1f}% {st['mdd']:>6.1f}% {st['pf']:>5.2f} {st['wr']:>5.1f}% {st['n']:>5}  {v:<10} ║")
-        else:
-            print(f"║  {label:<26} {'データ不足':>10}" + " "*35 + "║")
+    # ヘッダー
+    hdr = f"  {'コストシナリオ':<32}"
+    for pn in period_names:
+        hdr += f" {pn.split(':')[0]:>9}"
+    hdr += f"  {'平均':>8}  損益分岐"
+    print(hdr)
+    print("─" * W)
 
-    print("╠" + "═"*70 + "╣")
+    breakeven_costs = []
+    for cn in cost_names:
+        row_anns = []
+        for pn in period_names:
+            st = matrix.get((cn, pn))
+            row_anns.append(st["ann"] if st else None)
 
-    # 全期間合算
-    all_t = []
-    for nm, st in results.items():
-        all_t  # placeholder
-    ann_vals = [st["ann"] for st in results.values() if st]
-    pf_vals  = [st["pf"]  for st in results.values() if st]
-    avg_ann  = np.mean(ann_vals) if ann_vals else 0
-    avg_pf   = np.mean(pf_vals)  if pf_vals else 0
-    win_pds  = sum(1 for v in ann_vals if v > 0)
+        valid = [v for v in row_anns if v is not None]
+        avg   = np.mean(valid) if valid else None
+        pos_c = sum(1 for v in valid if v > 0)
 
-    print(f"║  {'全期間平均':<26} {avg_ann:>+9.1f}% {'─':>7} {avg_pf:>5.2f} {'─':>6} {'─':>5}  {win_pds}/{len(ann_vals)}期間黒字  ║")
-    print("╚" + "═"*70 + "╝")
+        label = cn[:30]
+        line  = f"  {label:<32}"
+        for ann in row_anns:
+            line += f" {cell(ann):>9}"
+        avg_str = f"{avg:>+7.0f}%" if avg is not None else "   ──  "
+        be_str  = f"{pos_c}/{len(valid)}黒字"
+        print(line + f"  \033[0m{avg_str}  {be_str}")
+        breakeven_costs.append((cn, avg, pos_c, len(valid)))
 
-    # 詳細
+    print("─" * W)
+    # PF行
+    pf_row = f"  {'[参考] PF':<32}"
+    for pn in period_names:
+        st = matrix.get((cost_names[0], pn))
+        pf_row += f" {st['pf']:>8.2f} " if st else f" {'──':>9}"
+    print(pf_row)
+    print("=" * W)
+
+    # 損益分岐ライン
     print()
-    for name, st in results.items():
-        if not st: continue
-        label = name.replace('\n   ', ' ')
-        print(f"  【{label}】")
-        print(f"    純損益: ${st['net']:+.2f}  年利: {st['ann']:+.1f}%  最大DD: {st['mdd']:.1f}%  カルマー: {st['cal']:.1f}")
-        print(f"    トレード: {st['n']}件  勝率: {st['wr']:.1f}%  PF: {st['pf']:.2f}")
-        print()
+    print("  ── 損益分岐コスト分析 ──────────────────────────────────")
+    for cn, avg, pos_c, total in breakeven_costs:
+        label = cn[:35]
+        ok = "✓ 全期間黒字" if pos_c == total else (f"△ {pos_c}/{total}黒字" if pos_c >= total*0.75 else f"✗ {pos_c}/{total}黒字")
+        avg_s = f"平均年利{avg:+.0f}%" if avg else ""
+        print(f"  {label}  {avg_s}  {ok}")
 
-    # 総括
-    print("─"*72)
-    if win_pds == len(ann_vals):
-        print("  ✓ 全期間でプラス — 相場環境への頑健性あり")
-    elif win_pds >= len(ann_vals) * 0.75:
-        print("  △ 大半の期間でプラス — 特定レジームに弱点あり")
-    else:
-        print("  ✗ マイナス期間が多い — パラメータ再検討推奨")
-    print(f"  平均年利 {avg_ann:+.1f}%  ※合成データ推計値。実データ検証が必須。")
-    print("─"*72)
+    print()
+    print("  ※ 年利は合成データ推計値。MT5実ティックデータでの検証が必須。")
+    print("=" * W)
+
 
 # ── メイン ───────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=" * 72)
-    print("  期間別ドライラン開始")
+    print("=" * 74)
+    print("  手数料感度分析ドライラン")
     print(f"  各期間: {BARS_PER_PERIOD:,} バー (M1換算 約{BARS_PER_PERIOD//60//24}日分)")
-    print("=" * 72)
+    print(f"  コストシナリオ: {len(COST_SCENARIOS)}種  ×  相場レジーム: {len(PERIODS)}種")
+    print("=" * 74)
 
-    results = {}
-    for name, cfg in PERIODS.items():
-        label = name.split('\n')[0]
-        print(f"  [{label}] データ生成・バックテスト中...", end=" ", flush=True)
-        t0 = time.time()
-        closes, highs, lows = generate_period(cfg, BARS_PER_PERIOD)
-        trades = backtest(closes, highs, lows, BEST_PARAMS)
-        st = stats(trades, BARS_PER_PERIOD)
-        results[name] = st
-        print(f"{time.time()-t0:.1f}s  → {len(trades)}件", flush=True)
+    # 先にOHLCデータを全期間生成
+    period_data = {}
+    for pname, cfg in PERIODS.items():
+        period_data[pname] = generate_period(cfg, BARS_PER_PERIOD)
 
-    print_report(results)
+    matrix = {}
+    total_runs = len(COST_SCENARIOS) * len(PERIODS)
+    run = 0
+    t0  = time.time()
+
+    for cname, ccfg in COST_SCENARIOS.items():
+        p = dict(BEST_PARAMS)
+        p["SPREAD_POINTS"] = ccfg["spread_pts"]
+        p["MAX_SPREAD"]    = ccfg["spread_pts"] + 10
+        comm = ccfg["commission"]
+
+        for pname, (closes, highs, lows) in period_data.items():
+            trades = backtest(closes, highs, lows, p, commission=comm)
+            st     = stats(trades, BARS_PER_PERIOD)
+            matrix[(cname, pname)] = st
+            run += 1
+
+    print(f"  完了 {time.time()-t0:.1f}s ({total_runs}ケース)\n")
+
+    period_names = list(PERIODS.keys())
+    cost_names   = list(COST_SCENARIOS.keys())
+    print_cross_table(matrix, period_names, cost_names)
