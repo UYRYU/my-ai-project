@@ -25,11 +25,13 @@ from bs_edge.config import load_config
 from bs_edge.market_loader import load_up_down_markets
 from bs_edge.metrics import summarise
 from bs_edge.polymarket_client import PolymarketClient
+from bs_edge.portfolio import run_portfolio
 from bs_edge.resolution import (
     BinanceCloseResolver,
     ChainedResolver,
     PolymarketNativeResolver,
 )
+from bs_edge.slippage import build_from_config
 from bs_edge.walkforward import walk_forward
 
 logger = logging.getLogger("run_backtest")
@@ -48,6 +50,13 @@ def main() -> int:
     p.add_argument("--train-days", type=int, default=None)
     p.add_argument("--test-days", type=int, default=None)
     p.add_argument("--walk-forward", action="store_true")
+    p.add_argument("--portfolio", action="store_true",
+                   help="Run chronological portfolio engine with risk gates")
+    p.add_argument("--slippage", choices=("constant", "linear", "sqrt"), default=None)
+    p.add_argument("--max-concurrent", type=int, default=None)
+    p.add_argument("--max-notional", type=float, default=None)
+    p.add_argument("--per-event-cap", type=float, default=None)
+    p.add_argument("--daily-loss-limit", type=float, default=None)
     p.add_argument("--output", type=Path, default=Path("out/trades.parquet"))
     p.add_argument("--summary", type=Path, default=Path("out/summary.json"))
     args = p.parse_args()
@@ -59,6 +68,16 @@ def main() -> int:
         overrides["train_days"] = args.train_days
     if args.test_days is not None:
         overrides["test_days"] = args.test_days
+    if args.slippage is not None:
+        overrides["slippage_model"] = args.slippage
+    if args.max_concurrent is not None:
+        overrides["max_concurrent_positions"] = args.max_concurrent
+    if args.max_notional is not None:
+        overrides["max_notional_exposure"] = args.max_notional
+    if args.per_event_cap is not None:
+        overrides["per_event_notional_cap"] = args.per_event_cap
+    if args.daily_loss_limit is not None:
+        overrides["daily_loss_limit"] = args.daily_loss_limit
     cfg = load_config(args.config, **overrides)
 
     since_ts = _parse_date(args.since)
@@ -112,17 +131,28 @@ def main() -> int:
         PolymarketNativeResolver(poly),
         BinanceCloseResolver(btc),
     ])
+    slippage = build_from_config(cfg)
 
     if args.walk_forward:
         report = walk_forward(markets, btc, histories, cfg, resolver=resolver)
         trades = report.all_trades
+    elif args.portfolio:
+        window = cfg.sigma_windows_min[len(cfg.sigma_windows_min) // 2]
+        estimator = cfg.sigma_estimators[0]
+        pres = run_portfolio(
+            markets, btc, histories, cfg,
+            sigma_window_min=window, sigma_estimator=estimator,
+            resolver=resolver, slippage=slippage,
+        )
+        trades = pres.to_frame()
+        logger.info("gates: %s", dict(pres.blocked_by_gate))
     else:
         window = cfg.sigma_windows_min[len(cfg.sigma_windows_min) // 2]
         estimator = cfg.sigma_estimators[0]
         res = backtest_many(
             markets, btc, histories, cfg,
             sigma_window_min=window, sigma_estimator=estimator,
-            resolver=resolver,
+            resolver=resolver, slippage=slippage,
         )
         trades = res.to_frame()
 

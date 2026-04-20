@@ -77,14 +77,32 @@ class Config:
     # Taker fee per fill (fraction of notional). Polymarket is currently 0
     # for retail; keep configurable.
     fee_bps: float = 0.0
-    # Half-spread assumption (probability units) to cross the book.
+    # Slippage model: "constant" | "linear" | "sqrt".
+    slippage_model: str = "constant"
+    # Half-spread floor (probability units) used by all models.
     half_spread: float = 0.01
+    # LinearImpact: extra prob units per $1 of notional.
+    impact_per_dollar: float = 1e-5
+    # SqrtImpact: extra prob units per sqrt(notional).
+    impact_sqrt_k: float = 2e-4
     # Minimum time-to-expiry (seconds) to consider a market. Markets with
     # <60s left are usually too thin/noisy to price meaningfully.
     min_time_to_expiry_s: int = 60
     # Maximum time-to-expiry (seconds). Above this, the BS model is noisy
     # because sigma estimation dominates.
     max_time_to_expiry_s: int = 24 * 3600
+
+    # --- Portfolio-level risk controls ----------------------------------------
+    # Upper bound on simultaneously open positions across all markets.
+    max_concurrent_positions: int = 10
+    # Upper bound on total open notional ($) at any instant.
+    max_notional_exposure: float = 10_000.0
+    # Max notional assignable to a single event (sum across its markets).
+    per_event_notional_cap: float = 2_000.0
+    # If realised PnL on a UTC day drops below this, stop new entries.
+    daily_loss_limit: float = -1_000.0
+    # Starting equity for portfolio runs (cosmetic; affects equity curve).
+    starting_equity: float = 10_000.0
 
     # --- Walk-forward ----------------------------------------------------------
     # Training window length (days) and out-of-sample step (days).
@@ -117,6 +135,12 @@ class Config:
             raise ValueError("kelly_cap must be in (0, 1]")
         if self.edge_threshold < 0:
             raise ValueError("edge_threshold must be >= 0")
+        if self.slippage_model not in {"constant", "linear", "sqrt"}:
+            raise ValueError(f"unknown slippage_model {self.slippage_model!r}")
+        if self.max_concurrent_positions < 0:
+            raise ValueError("max_concurrent_positions must be >= 0")
+        if self.max_notional_exposure < 0:
+            raise ValueError("max_notional_exposure must be >= 0")
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

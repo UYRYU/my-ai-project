@@ -39,6 +39,7 @@ from .config import Config
 from .market_loader import UpDownMarket
 from .pricing import quote_edge
 from .resolution import BinanceCloseResolver, OutcomeResolver
+from .slippage import SlippageModel, build_from_config
 from .volatility import estimate_sigma
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ def backtest_market(
     sigma_estimator: str,
     resolver: OutcomeResolver | None = None,
     realised_outcome: str | None = None,
+    slippage: SlippageModel | None = None,
 ) -> list[Trade]:
     """Backtest a single market.
 
@@ -124,6 +126,7 @@ def backtest_market(
         logger.debug("skip %s: cannot determine outcome", market.slug)
         return []
 
+    slip = slippage if slippage is not None else build_from_config(cfg)
     history = up_price_history
     state: Optional[_Position] = None
     trades: list[Trade] = []
@@ -169,14 +172,14 @@ def backtest_market(
             best = max((quote_up, quote_down), key=lambda q: q.edge)
             if best.edge <= cfg.edge_threshold:
                 continue
-            state = _open(market, best, spot, sigma, ttm_s, unix_ts, cfg)
+            state = _open(market, best, spot, sigma, ttm_s, unix_ts, cfg, slip)
             continue
 
         # Already in a position -- check exit conditions.
         current = quote_up if state.side == "UP" else quote_down
         reason = _exit_reason(state, current, unix_ts, ttm_s, cfg)
         if reason is not None:
-            trades.append(_close_early(state, current, unix_ts, reason, cfg))
+            trades.append(_close_early(state, current, unix_ts, reason, cfg, slip))
             state = None
             break  # one position per market
 
@@ -194,7 +197,9 @@ def backtest_many(
     sigma_window_min: int,
     sigma_estimator: str,
     resolver: OutcomeResolver | None = None,
+    slippage: SlippageModel | None = None,
 ) -> BacktestResult:
+    slip = slippage if slippage is not None else build_from_config(cfg)
     result = BacktestResult()
     for mkt in markets:
         result.considered += 1
@@ -208,6 +213,7 @@ def backtest_many(
                 sigma_window_min=sigma_window_min,
                 sigma_estimator=sigma_estimator,
                 resolver=resolver,
+                slippage=slip,
             )
         )
     logger.info(
@@ -239,8 +245,12 @@ class _Position:
     entry_fee: float
 
 
-def _open(market: UpDownMarket, q, spot: float, sigma: float, ttm_s: int, unix_ts: int, cfg: Config) -> _Position:
-    fill_price = min(1.0, max(0.0, q.market_price + cfg.half_spread))
+def _open(
+    market: UpDownMarket, q, spot: float, sigma: float, ttm_s: int,
+    unix_ts: int, cfg: Config, slip: SlippageModel,
+) -> _Position:
+    stake_estimate = _stake(cfg, q.model_price, q.market_price + cfg.half_spread)
+    fill_price = slip.buy_price(q.market_price, stake_estimate, ts=unix_ts)
     stake = _stake(cfg, q.model_price, fill_price)
     contracts = stake / fill_price if fill_price > 0 else 0.0
     entry_fee = contracts * fill_price * (cfg.fee_bps * 1e-4)
@@ -267,8 +277,11 @@ def _exit_reason(pos: _Position, current, now_ts: int, ttm_s: int, cfg: Config) 
     return None
 
 
-def _close_early(pos: _Position, current, now_ts: int, reason: str, cfg: Config) -> Trade:
-    exit_price = min(1.0, max(0.0, current.market_price - cfg.half_spread))
+def _close_early(
+    pos: _Position, current, now_ts: int, reason: str, cfg: Config, slip: SlippageModel,
+) -> Trade:
+    exit_notional = pos.contracts * current.market_price
+    exit_price = slip.sell_price(current.market_price, exit_notional, ts=now_ts)
     exit_fee = pos.contracts * exit_price * (cfg.fee_bps * 1e-4)
     gross = pos.contracts * (exit_price - pos.fill_price)
     return Trade(
