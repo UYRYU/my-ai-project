@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 import httpx
@@ -27,20 +28,30 @@ class Market:
         return tuple((o.best_bid + o.best_ask) / 2 for o in self.outcomes)
 
 
-def _outcome_from_row(row: dict[str, Any]) -> MarketOutcome | None:
-    token_id = str(row.get("clobTokenIds") or row.get("token_id") or "")
-    if not token_id:
-        return None
-    return MarketOutcome(
-        token_id=token_id,
-        label=row.get("outcome", ""),
-        best_bid=float(row.get("bestBid") or 0.0),
-        best_ask=float(row.get("bestAsk") or 0.0),
-    )
+def _parse_maybe_json_list(value: Any) -> list[Any]:
+    """Gamma returns `outcomes`, `outcomePrices`, `clobTokenIds` as JSON strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return []
+        try:
+            parsed = json.loads(s)
+            return parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
 
 
 def fetch_active_markets(tags: Iterable[str], limit: int = 200) -> list[Market]:
-    """Pull active markets filtered by tag slugs via the Gamma REST API."""
+    """Pull active markets filtered by tag slugs via the Gamma REST API.
+
+    Gamma prices are a 1-tick snapshot — fine for discovery, NOT for
+    execution. Use `fetch_orderbook` to get real depth before placing.
+    """
     params = {
         "active": "true",
         "closed": "false",
@@ -55,17 +66,20 @@ def fetch_active_markets(tags: Iterable[str], limit: int = 200) -> list[Market]:
 
     markets: list[Market] = []
     for row in rows:
-        outcomes = []
-        raw_outcomes = row.get("outcomes") or []
-        raw_prices = row.get("outcomePrices") or []
-        raw_tokens = row.get("clobTokenIds") or []
-        for i, label in enumerate(raw_outcomes):
-            token_id = raw_tokens[i] if i < len(raw_tokens) else ""
-            price = float(raw_prices[i]) if i < len(raw_prices) else 0.0
+        labels = _parse_maybe_json_list(row.get("outcomes"))
+        prices = _parse_maybe_json_list(row.get("outcomePrices"))
+        tokens = _parse_maybe_json_list(row.get("clobTokenIds"))
+        outcomes: list[MarketOutcome] = []
+        for i, label in enumerate(labels):
+            token_id = str(tokens[i]) if i < len(tokens) else ""
+            try:
+                price = float(prices[i]) if i < len(prices) else 0.0
+            except (TypeError, ValueError):
+                price = 0.0
             if not token_id:
                 continue
             outcomes.append(MarketOutcome(
-                token_id=str(token_id),
+                token_id=token_id,
                 label=str(label),
                 best_bid=price,
                 best_ask=price,
