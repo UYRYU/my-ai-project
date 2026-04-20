@@ -27,10 +27,18 @@ def is_tradeable(
     max_spread: float = 0.05,
     min_hours_to_close: float = 0.25,
     max_hours_to_close: float = 72.0,
+    min_volume_24h: float = 5000.0,
+    min_liquidity: float = 1000.0,
 ) -> tuple[bool, str]:
     """Return (ok, reason). Reason is empty on ok."""
     if not market.outcomes:
         return False, "no outcomes"
+
+    # Volume/liquidity gate — dead markets produce ghost arbs
+    if market.volume_24h > 0 and market.volume_24h < min_volume_24h:
+        return False, f"volume ${market.volume_24h:.0f} < ${min_volume_24h:.0f}"
+    if market.liquidity > 0 and market.liquidity < min_liquidity:
+        return False, f"liquidity ${market.liquidity:.0f} < ${min_liquidity:.0f}"
 
     # Wide spread → snapshot is noise, real price undefined
     for o in market.outcomes:

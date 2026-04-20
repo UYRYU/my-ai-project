@@ -22,6 +22,8 @@ class Market:
     end_date: str | None
     category: str | None
     outcomes: tuple[MarketOutcome, ...]
+    volume_24h: float = 0.0
+    liquidity: float = 0.0
 
     @property
     def mid(self) -> tuple[float, ...]:
@@ -93,6 +95,8 @@ def fetch_active_markets(tags: Iterable[str], limit: int = 200) -> list[Market]:
             end_date=row.get("endDate"),
             category=row.get("category"),
             outcomes=tuple(outcomes),
+            volume_24h=float(row.get("volume24hr") or 0.0),
+            liquidity=float(row.get("liquidity") or 0.0),
         ))
     return markets
 

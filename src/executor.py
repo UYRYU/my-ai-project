@@ -96,7 +96,15 @@ def _live_place(
         signature_type=1,
         funder=cfg.polymarket_funder,
     )
-    client.set_api_creds(client.create_or_derive_api_creds())
+    if cfg.polymarket_api_key and cfg.polymarket_api_secret and cfg.polymarket_api_passphrase:
+        from py_clob_client.clob_types import ApiCreds
+        client.set_api_creds(ApiCreds(
+            api_key=cfg.polymarket_api_key,
+            api_secret=cfg.polymarket_api_secret,
+            api_passphrase=cfg.polymarket_api_passphrase,
+        ))
+    else:
+        client.set_api_creds(client.create_or_derive_api_creds())
 
     per_leg_usd = cfg.max_position_usd / max(len(legs), 1)
     results: list[LegResult] = []
@@ -139,7 +147,15 @@ def _maybe_unwind(results: list[LegResult], cfg: Config, book: Book) -> None:
         signature_type=1,
         funder=cfg.polymarket_funder,
     )
-    client.set_api_creds(client.create_or_derive_api_creds())
+    if cfg.polymarket_api_key and cfg.polymarket_api_secret and cfg.polymarket_api_passphrase:
+        from py_clob_client.clob_types import ApiCreds
+        client.set_api_creds(ApiCreds(
+            api_key=cfg.polymarket_api_key,
+            api_secret=cfg.polymarket_api_secret,
+            api_passphrase=cfg.polymarket_api_passphrase,
+        ))
+    else:
+        client.set_api_creds(client.create_or_derive_api_creds())
 
     for r in results:
         if r.filled_size <= 0:
