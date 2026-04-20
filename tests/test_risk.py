@@ -9,6 +9,7 @@ def _cfg(**overrides) -> Config:
         polymarket_private_key="",
         polymarket_funder="",
         polymarket_host="",
+        polygon_rpc="",
         polymarket_api_key="",
         polymarket_api_secret="",
         polymarket_api_passphrase="",

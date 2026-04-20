@@ -11,6 +11,7 @@ class Config:
     polymarket_private_key: str
     polymarket_funder: str
     polymarket_host: str
+    polygon_rpc: str
     polymarket_api_key: str
     polymarket_api_secret: str
     polymarket_api_passphrase: str
@@ -30,6 +31,7 @@ def load() -> Config:
         polymarket_private_key=os.environ.get("POLYMARKET_PRIVATE_KEY", ""),
         polymarket_funder=os.environ.get("POLYMARKET_FUNDER_ADDRESS", ""),
         polymarket_host=os.environ.get("POLYMARKET_HOST", "https://clob.polymarket.com"),
+        polygon_rpc=os.environ.get("POLYGON_RPC", "https://polygon-rpc.com"),
         polymarket_api_key=os.environ.get("POLYMARKET_API_KEY", ""),
         polymarket_api_secret=os.environ.get("POLYMARKET_API_SECRET", ""),
         polymarket_api_passphrase=os.environ.get("POLYMARKET_API_PASSPHRASE", ""),

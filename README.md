@@ -15,18 +15,38 @@ Polymarket スポーツアービトラージボット。**現実的な運用**�
 
 **本気で稼ぎに行くなら**: このコードをベースに WebSocket 購読化・VPS を NY 配置・Polygon 専用ノードまで詰める必要があります。そこまで行って初めて $50 元手で年 $500〜$2,000 程度が見えてくる規模感。
 
+## 2つの実行モード
+
+| モード | 起動コマンド | 用途 |
+|---|---|---|
+| **REST ベース**(基礎) | `python main.py` | ローカル検証、設定調整、学習 |
+| **WebSocket ベース**(本番) | `python -m src.ws_bot` | VPS 常駐、低レイテンシ、メトリクス出力 |
+
+WS モードは `clob_ws.OrderbookCache` を使って CLOB の market channel を直接購読。REST ポーリング (~2s レイテンシ)と比べて ~50ms に短縮 → レース勝率が大きく改善。
+
 ## アーキテクチャ
 
 ```
+[REST モード]
 Gamma API ──▶ market_filter ──▶ arbitrage.scan ──▶ orderbook.depth検証 ──▶ risk.check ──▶ executor
-                │(流動性/close時間)    │(snapshot)      │(VWAP)              │(日次上限)      │(atomic, partial-fill時 unwind)
-                │
-                └─▶ trades.jsonl (全イベント記録)
-                         │
-                         └─▶ python -m src.analyze trades.jsonl  (Claude で日次レビュー)
+                                                                                               │
+                                                                              trades.jsonl ◀──┘
+
+[WS モード]  ─── 本番運用向け ───
+discovery_loop (Gamma 30s毎)              ws_supervisor                    trading_loop (100ms毎)
+      │                                          │                                │
+      │ markets/asset_ids                        │ CLOB market channel           │
+      │                                          ▼                                │
+      └──────────────▶ OrderbookCache ◀──────────┘                               │
+                              │                                                   │
+                              └───────────────────────────────────────────────────┘
+                                                      │
+                                                      ▼
+                                  risk.check → executor → trades.jsonl
+                                  metrics :9100/metrics (Prometheus)
 ```
 
-**ホットループに Claude は入っていません**。レイテンシとコストでアービ edge が消えるので、Claude は日次レビュー専用。
+**ホットループに Claude は入っていません**。レイテンシとコストでアービ edge が消えるので、Claude は日次レビュー専用(`python -m src.analyze`)。
 
 ## 使い方
 
@@ -102,15 +122,29 @@ python -m src.analyze trades.jsonl
 
 設定を弄るなら `src/risk.py` と `src/market_filter.py` の kwargs。
 
-## 未実装(伸びしろ)
+## VPS デプロイ
 
-本気で利益を出すなら順に足す:
+本番稼働させるなら `deploy/README.md` に手順。要点:
 
-1. **CLOB WebSocket 直購読** — REST ポーリングは遅すぎ。最大の改善余地
-2. **同試合クロスマーケット basket** — モネーライン × スプレッド × トータルで implied prob が矛盾する瞬間を捕捉
-3. **Maker 注文に切り替え** — taker で cross-spread するとフィーで edge が消える
-4. **Polygon 専用 RPC** — パブリック RPC は詰まる。Alchemy Growth レベル以上
-5. **VPS を CLOB サーバ近接地域に配置** — us-east-1 等
+```bash
+# VPS (Ubuntu 22.04) で
+git clone <your-fork> /opt/polymarket-bot
+cd /opt/polymarket-bot
+python3.11 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+cp .env.example .env && nano .env       # 秘密鍵はローカルで直書き
+./.venv/bin/python -m src.healthcheck   # 全部 ✓ まで進まない
+sudo cp deploy/polymarket-bot.service /etc/systemd/system/
+sudo systemctl enable --now polymarket-bot
+```
+
+`curl http://localhost:9100/metrics` で Prometheus メトリクスが取れる。
+
+## 未実装(次にやるべき残り)
+
+1. **同試合クロスマーケット basket** — moneyline × spread × total で implied prob が矛盾する瞬間を捕捉(WS 購読が下地になる)
+2. **Maker 注文に切り替え** — taker で cross-spread するとフィーで edge が消える
+3. **Alchemy / Infura 専用 RPC** — `POLYGON_RPC` に設定(パブリック RPC は詰まる)
+4. **自動 settle** — 市場解決時に payout を realized PnL に反映
 
 ## テスト
 

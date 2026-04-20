@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import httpx
 from dotenv import load_dotenv
 
-POLYGON_RPC = "https://polygon-rpc.com"
+POLYGON_RPC = os.environ.get("POLYGON_RPC", "https://polygon-rpc.com")
 USDC_E_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # USDC.e on Polygon (Polymarket's collateral)
 GAMMA_HEALTH = "https://gamma-api.polymarket.com/markets?limit=1"
 CLOB_HEALTH = "https://clob.polymarket.com/time"
