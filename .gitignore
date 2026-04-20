@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Data caches (keep dir, ignore contents)
+bs_edge/cache/*
+!bs_edge/cache/.gitkeep
+
+# Backtest outputs
+out/
+*.parquet
+*.csv
