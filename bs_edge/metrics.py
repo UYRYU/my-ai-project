@@ -65,21 +65,29 @@ def brier_score(trades: pd.DataFrame) -> float:
     """Brier score on the model's probability vs. realised outcome.
 
     Uses ``entry_model_price`` for the chosen side and ``settle_price``
-    (1.0 if side won). Lower is better; 0.25 is a coin-flip baseline.
+    (1.0 if side won). Early-exit trades have ``settle_price == NaN``
+    and are excluded because they carry no realised outcome.
+    Lower is better; 0.25 is a coin-flip baseline.
     """
-    if trades.empty:
+    if trades.empty or "settle_price" not in trades.columns:
         return 0.0
-    p = trades["entry_model_price"].to_numpy(dtype="float64")
-    y = trades["settle_price"].to_numpy(dtype="float64")
+    mask = trades["settle_price"].notna()
+    if not mask.any():
+        return 0.0
+    p = trades.loc[mask, "entry_model_price"].to_numpy(dtype="float64")
+    y = trades.loc[mask, "settle_price"].to_numpy(dtype="float64")
     return float(np.mean((p - y) ** 2))
 
 
 def calibration_mae(trades: pd.DataFrame, bins: int = 10) -> float:
     """Mean absolute calibration error across probability bins."""
-    if trades.empty:
+    if trades.empty or "settle_price" not in trades.columns:
         return 0.0
-    p = trades["entry_model_price"].to_numpy(dtype="float64")
-    y = trades["settle_price"].to_numpy(dtype="float64")
+    mask = trades["settle_price"].notna()
+    if not mask.any():
+        return 0.0
+    p = trades.loc[mask, "entry_model_price"].to_numpy(dtype="float64")
+    y = trades.loc[mask, "settle_price"].to_numpy(dtype="float64")
     edges = np.linspace(0.0, 1.0, bins + 1)
     errs = []
     for lo, hi in zip(edges[:-1], edges[1:]):
