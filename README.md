@@ -69,6 +69,38 @@ ANTHROPIC_API_KEY=sk-ant-... python main.py
 # ANTHROPIC_API_KEY 未設定なら Claude スカウトはスキップされる
 ```
 
+### ステップバイステップ(初回セットアップ)
+
+1. **(漏洩キーがあれば revoke)** Polymarket → Settings → API Keys で古いキーを削除
+2. **EOA 秘密鍵を取得**: Polymarket → Settings → Export Private Key
+   - 画面/チャットには絶対に貼らない。`.env` に直接書く
+3. **Funder アドレス確認**: Polymarket → Profile に表示されるプロキシウォレットアドレス
+4. **`.env` 作成**:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...                  # 任意
+   POLYMARKET_PRIVATE_KEY=0x<64桁>
+   POLYMARKET_FUNDER_ADDRESS=0x<40桁>
+   BOT_DRY_RUN=true
+   ```
+5. **ヘルスチェック**:
+   ```bash
+   python -m src.healthcheck
+   ```
+   全項目 ✓ になるまで進まない。USDC.e 残高が 0 なら Polymarket に deposit。
+6. **オフラインスモークテスト**:
+   ```bash
+   BOT_MOCK=true BOT_ONCE=true python main.py
+   ```
+7. **ライブドライラン**(発注しない):
+   ```bash
+   python main.py
+   ```
+   `trades.jsonl` を眺めて検出機会の質と頻度を観察(数日推奨)
+8. **ライブ少額**(怖い段階):
+   - `BOT_MAX_POSITION_USD=5` に下げる
+   - `BOT_DRY_RUN=false` に変更
+   - 1 約定ごとに Polymarket UI で fill を目視確認
+
 既定は `BOT_DRY_RUN=true`。実発注前に必ず:
 
 1. ドライランで数日回して `trades.jsonl` を確認
