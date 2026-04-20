@@ -4,19 +4,29 @@ Includes:
 - A clear single-market arb (sum of asks < 1.0)
 - A no-arb market (sum > 1.0, the normal case)
 - Two markets for the same event (so event_grouper has something to group)
+
+End dates are generated dynamically so market_filter doesn't reject
+everything as "too far out".
 """
+
+from datetime import datetime, timedelta, timezone
 
 from .polymarket import Market, MarketOutcome
 
 
+def _end_iso(hours_ahead: float = 6) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours_ahead)).isoformat().replace("+00:00", "Z")
+
+
 def markets() -> list[Market]:
+    end = _end_iso(6)
     return [
         # Real arb: 0.45 + 0.50 = 0.95 → 5 cents of free edge per dollar
         Market(
             condition_id="0xMOCK_ARB",
             question="Will the Lakers beat the Celtics tonight?",
             slug="nba-lakers-vs-celtics-2026-04-19-moneyline",
-            end_date="2026-04-20T03:00:00Z",
+            end_date=end,
             category="sports",
             outcomes=(
                 MarketOutcome(token_id="tok_lakers_ml", label="Lakers", best_bid=0.44, best_ask=0.45),
@@ -28,7 +38,7 @@ def markets() -> list[Market]:
             condition_id="0xMOCK_SPREAD",
             question="Will the Lakers cover -3.5?",
             slug="nba-lakers-vs-celtics-2026-04-19-spread-lakers-3p5",
-            end_date="2026-04-20T03:00:00Z",
+            end_date=end,
             category="sports",
             outcomes=(
                 MarketOutcome(token_id="tok_lakers_cover", label="Yes", best_bid=0.39, best_ask=0.41),
@@ -40,7 +50,7 @@ def markets() -> list[Market]:
             condition_id="0xMOCK_NORMAL",
             question="Will the Warriors beat the Suns?",
             slug="nba-warriors-vs-suns-2026-04-19-moneyline",
-            end_date="2026-04-20T03:00:00Z",
+            end_date=end,
             category="sports",
             outcomes=(
                 MarketOutcome(token_id="tok_warriors_ml", label="Warriors", best_bid=0.50, best_ask=0.51),
