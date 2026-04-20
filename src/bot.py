@@ -13,22 +13,39 @@ caching — so we batch.
 
 import time
 from anthropic import Anthropic
-from . import arbitrage, claude_analyzer, event_grouper, executor, orderbook, polymarket, risk, trade_log
-from .config import load
+from . import arbitrage, claude_analyzer, event_grouper, executor, mock_data, orderbook, polymarket, risk, trade_log
+from .config import Config, load
 from .positions import Book
 
 
-CLAUDE_TICK_INTERVAL = 6  # ~ every 6 ticks
+CLAUDE_TICK_INTERVAL = 6
 
 
-def _verify_and_execute(opp, cfg, book) -> None:
+def _fetch_markets(cfg: Config) -> list[polymarket.Market]:
+    if cfg.mock:
+        return mock_data.markets()
+    return polymarket.fetch_active_markets(cfg.sports_tags)
+
+
+def _fetch_orderbook(cfg: Config, token_id: str) -> dict:
+    if cfg.mock:
+        return mock_data.orderbook(token_id)
+    return polymarket.fetch_orderbook(cfg.polymarket_host, token_id)
+
+
+def _verify_and_execute(opp, cfg: Config, book: Book) -> None:
     leg_token_ids = [t for t, _ in opp.legs]
-    target_payout = cfg.max_position_usd  # we'll size so winning leg pays this
-    quote = orderbook.quote_basket_cost(cfg.polymarket_host, leg_token_ids, target_payout)
-    if quote is None:
-        trade_log.write("rejected_depth", slug=opp.market.slug, kind=opp.kind)
-        return
-    total_cost, fills = quote
+    target_payout = cfg.max_position_usd
+    quotes: list[orderbook.FillQuote] = []
+    total_cost = 0.0
+    for token_id in leg_token_ids:
+        book_data = _fetch_orderbook(cfg, token_id)
+        q = orderbook.average_fill_cost(book_data, "asks", target_payout)
+        if q is None:
+            trade_log.write("rejected_depth", slug=opp.market.slug, token=token_id)
+            return
+        quotes.append(q)
+        total_cost += q.avg_price * target_payout
     real_edge = target_payout - total_cost
     if real_edge < cfg.min_edge * target_payout:
         trade_log.write(
@@ -38,28 +55,35 @@ def _verify_and_execute(opp, cfg, book) -> None:
             real_edge_usd=real_edge,
         )
         return
-    decision = risk.check(total_cost, len(fills), cfg, book)
+    decision = risk.check(total_cost, len(quotes), cfg, book)
     if not decision.allow:
         trade_log.write("rejected_risk", reason=decision.reason, slug=opp.market.slug)
         return
-    executor.execute(opp, cfg, book, quotes=fills)
+    executor.execute(opp, cfg, book, quotes=quotes)
 
 
 def run() -> None:
     cfg = load()
-    claude = Anthropic(api_key=cfg.anthropic_api_key)
+    claude = Anthropic(api_key=cfg.anthropic_api_key) if cfg.anthropic_api_key else None
     book = Book()
 
-    print(f"[boot] dry_run={cfg.dry_run} tags={cfg.sports_tags} min_edge={cfg.min_edge}")
-    trade_log.write("boot", config=cfg.__dict__)
+    print(
+        f"[boot] dry_run={cfg.dry_run} mock={cfg.mock} once={cfg.once} "
+        f"tags={cfg.sports_tags} min_edge={cfg.min_edge} claude={'on' if claude else 'off'}"
+    )
+    safe_cfg = {k: ("***" if "key" in k.lower() or "private" in k.lower() else v)
+                for k, v in cfg.__dict__.items()}
+    trade_log.write("boot", config=safe_cfg)
 
     tick = 0
     while True:
         tick += 1
         try:
-            markets = polymarket.fetch_active_markets(cfg.sports_tags)
+            markets = _fetch_markets(cfg)
         except Exception as e:
             print(f"[tick {tick}] fetch failed: {e}")
+            if cfg.once:
+                return
             time.sleep(cfg.poll_seconds)
             continue
 
@@ -75,10 +99,8 @@ def run() -> None:
             if opp.kind == "same_market_sum_under_one":
                 _verify_and_execute(opp, cfg, book)
 
-        if tick % CLAUDE_TICK_INTERVAL == 0:
+        if claude is not None and tick % CLAUDE_TICK_INTERVAL == 0:
             try:
-                # Only feed Claude grouped events — it's where cross-market
-                # value lives and it keeps the prompt small enough to cache.
                 grouped_markets = [m for ms in events.values() for m in ms]
                 baskets = claude_analyzer.find_correlated_baskets(claude, grouped_markets)
                 for b in baskets:
@@ -92,6 +114,8 @@ def run() -> None:
             except Exception as e:
                 print(f"[tick {tick}] claude scan failed: {e}")
 
+        if cfg.once:
+            return
         time.sleep(cfg.poll_seconds)
 
 

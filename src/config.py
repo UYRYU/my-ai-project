@@ -16,11 +16,13 @@ class Config:
     max_position_usd: float
     poll_seconds: float
     dry_run: bool
+    mock: bool
+    once: bool
 
 
 def load() -> Config:
     return Config(
-        anthropic_api_key=os.environ["ANTHROPIC_API_KEY"],
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         polymarket_private_key=os.environ.get("POLYMARKET_PRIVATE_KEY", ""),
         polymarket_funder=os.environ.get("POLYMARKET_FUNDER_ADDRESS", ""),
         polymarket_host=os.environ.get("POLYMARKET_HOST", "https://clob.polymarket.com"),
@@ -29,4 +31,6 @@ def load() -> Config:
         max_position_usd=float(os.environ.get("BOT_MAX_POSITION_USD", "25")),
         poll_seconds=float(os.environ.get("BOT_POLL_SECONDS", "5")),
         dry_run=os.environ.get("BOT_DRY_RUN", "true").lower() == "true",
+        mock=os.environ.get("BOT_MOCK", "false").lower() == "true",
+        once=os.environ.get("BOT_ONCE", "false").lower() == "true",
     )

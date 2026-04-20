@@ -41,8 +41,32 @@ trade_log.jsonl ◀─ 全イベント append-only 記録
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# .env を編集 — ANTHROPIC_API_KEY は必須
+# .env を編集
 python main.py
+```
+
+### オフラインで動作確認(API キー不要)
+
+```bash
+BOT_MOCK=true BOT_ONCE=true python main.py
+```
+
+期待出力:
+```
+[boot] dry_run=True mock=True once=True tags=('nba', 'nfl') ... claude=off
+[tick 1] markets=3 events=1 candidates=1 pos=0 exposure=$0.00 pnl=$0.00
+[DRY] same_market_sum_under_one edge=0.0500 — Will the Lakers beat the Celtics tonight?
+  leg token=tok_lakers... price=0.4500
+  leg token=tok_celtic... price=0.5000
+```
+
+`trades.jsonl` に boot/opportunity が JSONL で記録される。
+
+### 本番ドライラン(ライブ市場、発注なし)
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python main.py
+# ANTHROPIC_API_KEY 未設定なら Claude スカウトはスキップされる
 ```
 
 既定は `BOT_DRY_RUN=true`。実発注前に必ず:
