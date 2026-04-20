@@ -82,11 +82,15 @@ def run(
     print(f"Net PnL:                 ${net_pnl:.2f}")
     print(f"Return on bankroll:       {raw_rate * 100:.2f}%")
     print(f"")
-    # Project to monthly if the log covers a shorter period
+    # Project to monthly if the log covers enough time
     ts_values = [float(o.get("ts", 0)) for o in opportunities if o.get("ts")]
     if len(ts_values) >= 2:
         days = (max(ts_values) - min(ts_values)) / 86400
-        if days > 0:
+        if days < 0.5:
+            print(f"Log span: {days * 24:.2f} hours (too short for monthly projection)")
+            print(f"  Per-basket economics: ${net_pnl / max(executed, 1):.3f} net / basket")
+            print(f"  Run the bot for 1+ day to get a meaningful monthly estimate.")
+        else:
             daily_pnl = net_pnl / days
             monthly_pnl = daily_pnl * 30
             monthly_pct = monthly_pnl / bankroll * 100 if bankroll > 0 else 0
