@@ -56,6 +56,16 @@ class Config:
     # --- Edge detection --------------------------------------------------------
     # Minimum absolute mispricing (|model - market|) to enter.
     edge_threshold: float = 0.05
+    # Exit when the *remaining* edge falls below this. Set to None to
+    # disable early exit and hold every position to settlement.
+    exit_edge_threshold: float | None = 0.01
+    # Exit when the edge's sign flips (model moves against the position).
+    exit_on_sign_flip: bool = True
+    # Force exit when fewer than this many seconds remain. Protects from
+    # last-minute spread blowouts near expiry.
+    exit_min_ttm_s: int = 60
+    # Upper bound on holding period in seconds after entry; None = no cap.
+    max_hold_s: int | None = None
     # Kelly fraction cap. Fractional Kelly is applied on top.
     kelly_cap: float = 0.25
     kelly_fraction: float = 0.5

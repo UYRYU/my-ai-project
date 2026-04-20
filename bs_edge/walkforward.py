@@ -23,6 +23,7 @@ from .backtest import BacktestResult, backtest_many
 from .config import Config
 from .market_loader import UpDownMarket
 from .metrics import summarise
+from .resolution import OutcomeResolver
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ def walk_forward(
     train_days: int | None = None,
     test_days: int | None = None,
     selection_metric: str = "sharpe",
+    resolver: OutcomeResolver | None = None,
 ) -> WalkForwardReport:
     """Run walk-forward over the whole market universe.
 
@@ -100,7 +102,7 @@ def walk_forward(
             continue
 
         best = _select_params(
-            train_markets, btc_bars, price_histories, cfg, selection_metric
+            train_markets, btc_bars, price_histories, cfg, selection_metric, resolver
         )
         if best is None:
             cursor += step
@@ -114,6 +116,7 @@ def walk_forward(
             cfg,
             sigma_window_min=best_window,
             sigma_estimator=best_estimator,
+            resolver=resolver,
         )
         report.folds.append(
             Fold(
@@ -147,6 +150,7 @@ def _select_params(
     price_histories: dict[str, pd.DataFrame],
     cfg: Config,
     selection_metric: str,
+    resolver: OutcomeResolver | None,
 ) -> tuple[int, str, float] | None:
     best: tuple[int, str, float] | None = None
     for window, est in itertools.product(cfg.sigma_windows_min, cfg.sigma_estimators):
@@ -158,6 +162,7 @@ def _select_params(
                 cfg,
                 sigma_window_min=window,
                 sigma_estimator=est,
+                resolver=resolver,
             )
         except Exception as exc:
             logger.warning("train failed for %s/%s: %s", window, est, exc)

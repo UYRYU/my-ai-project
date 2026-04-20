@@ -25,6 +25,11 @@ from bs_edge.config import load_config
 from bs_edge.market_loader import load_up_down_markets
 from bs_edge.metrics import summarise
 from bs_edge.polymarket_client import PolymarketClient
+from bs_edge.resolution import (
+    BinanceCloseResolver,
+    ChainedResolver,
+    PolymarketNativeResolver,
+)
 from bs_edge.walkforward import walk_forward
 
 logger = logging.getLogger("run_backtest")
@@ -103,8 +108,13 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.summary.parent.mkdir(parents=True, exist_ok=True)
 
+    resolver = ChainedResolver([
+        PolymarketNativeResolver(poly),
+        BinanceCloseResolver(btc),
+    ])
+
     if args.walk_forward:
-        report = walk_forward(markets, btc, histories, cfg)
+        report = walk_forward(markets, btc, histories, cfg, resolver=resolver)
         trades = report.all_trades
     else:
         window = cfg.sigma_windows_min[len(cfg.sigma_windows_min) // 2]
@@ -112,6 +122,7 @@ def main() -> int:
         res = backtest_many(
             markets, btc, histories, cfg,
             sigma_window_min=window, sigma_estimator=estimator,
+            resolver=resolver,
         )
         trades = res.to_frame()
 

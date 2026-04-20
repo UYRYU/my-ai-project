@@ -1,22 +1,29 @@
 """Bar-by-bar backtest of the digital-option edge strategy.
 
-Given:
-  * A Polymarket Up/Down market (``UpDownMarket``)
-  * Its price history in probability units (one side; we work the Up side
-    and invert for Down)
-  * Binance 1m OHLCV covering at least ``[sigma_window, close_ts]``
+Lifecycle of a single market:
 
-we iterate forward through the price-history timestamps, estimating sigma
-from the most recent ``window_min`` minutes of bars, computing the fair
-Phi(d2), and recording any entry where |model - market| >= threshold.
+1. Walk forward through the Up-side price history.
+2. On each timestamp, estimate sigma from the trailing ``window_min``
+   minutes of BTC bars, compute ``Phi(d2)``, and compare to the market
+   price on both sides.
+3. When the larger-edge side exceeds ``edge_threshold``, open a long
+   position on that side at ``market + half_spread``.
+4. Continue iterating. At each subsequent bar, recompute the model and
+   decide whether to exit early:
 
-The backtest is single-shot-per-market: on the first edge we enter, hold
-until market close, and mark PnL against the binary realised outcome.
-This matches the tweet's narrative ("find edge -> enter -> wait -> exit")
-and avoids double-counting auto-correlated edges within one market.
+   - edge collapse: |current_edge| < ``exit_edge_threshold``
+   - sign flip: model now disagrees with our side
+   - hold-time cap: seconds since entry exceeds ``max_hold_s``
+   - approach to expiry: time-to-expiry < ``exit_min_ttm_s``
 
-No slippage model assumes depth; we use a simple half-spread to cross
-and a flat fee bps, both configurable.
+   Early exit sells at ``market - half_spread``.
+5. If none of those fire, the position settles at expiry against the
+   outcome provided by the resolver.
+
+The engine takes at most one position per market (the tweet's "find
+edge -> enter -> wait -> exit" flow). Follow-on entries after an exit
+are deliberately disabled to avoid double-counting autocorrelated signals
+within one market.
 """
 
 from __future__ import annotations
@@ -24,14 +31,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Optional
 
-import numpy as np
 import pandas as pd
 
 from .config import Config
 from .market_loader import UpDownMarket
 from .pricing import quote_edge
+from .resolution import BinanceCloseResolver, OutcomeResolver
 from .volatility import estimate_sigma
 
 logger = logging.getLogger(__name__)
@@ -43,17 +50,24 @@ class Trade:
     slug: str
     side: str  # "UP" or "DOWN"
     entry_ts: int
+    exit_ts: int
     close_ts: int
+    exit_reason: str  # "settle" | "edge_collapse" | "sign_flip" | "max_hold" | "near_expiry"
     entry_market_price: float
     entry_model_price: float
     entry_edge: float
+    exit_model_price: float
+    exit_market_price: float
+    exit_edge: float
     sigma: float
     spot_at_entry: float
     strike: float
     time_to_expiry_s: int
     stake: float
+    contracts: float
     fill_price: float
-    settle_price: float  # 1.0 if side wins, 0.0 otherwise
+    exit_price: float
+    settle_price: float  # 1.0 if side wins, 0.0 otherwise, NaN if early exit
     pnl: float
     fees: float
 
@@ -69,9 +83,7 @@ class BacktestResult:
 
     def to_frame(self) -> pd.DataFrame:
         if not self.trades:
-            return pd.DataFrame(
-                columns=list(Trade.__dataclass_fields__.keys())
-            )
+            return pd.DataFrame(columns=list(Trade.__dataclass_fields__.keys()))
         return pd.DataFrame([t.to_dict() for t in self.trades])
 
 
@@ -87,14 +99,14 @@ def backtest_market(
     cfg: Config,
     sigma_window_min: int,
     sigma_estimator: str,
+    resolver: OutcomeResolver | None = None,
     realised_outcome: str | None = None,
 ) -> list[Trade]:
     """Backtest a single market.
 
-    ``up_price_history`` is a DataFrame indexed by UTC timestamp with a
-    ``price`` column representing the Up side's market price in [0,1].
-    ``realised_outcome`` is "UP" or "DOWN"; if omitted we infer it from
-    the first BTC bar at/after ``market.close_ts`` relative to the strike.
+    Either ``resolver`` (preferred, composable) or ``realised_outcome``
+    (for tests) must produce a verdict. If neither does, we fall back to
+    a Binance close on ``btc_bars``.
     """
     if market.reference_price is None:
         logger.debug("skip %s: no reference price", market.slug)
@@ -103,16 +115,28 @@ def backtest_market(
         logger.debug("skip %s: empty price history", market.slug)
         return []
 
-    outcome = realised_outcome or _infer_outcome(btc_bars, market.close_ts, market.reference_price)
+    outcome = realised_outcome
+    if outcome is None and resolver is not None:
+        outcome = resolver.resolve(market)
     if outcome is None:
-        logger.debug("skip %s: cannot infer outcome", market.slug)
+        outcome = BinanceCloseResolver(btc_bars).resolve(market)
+    if outcome is None:
+        logger.debug("skip %s: cannot determine outcome", market.slug)
         return []
 
+    history = up_price_history
+    state: Optional[_Position] = None
     trades: list[Trade] = []
-    for ts, row in up_price_history.iterrows():
+
+    for ts, row in history.iterrows():
         unix_ts = int(ts.timestamp())
         ttm_s = market.close_ts - unix_ts
-        if ttm_s < cfg.min_time_to_expiry_s or ttm_s > cfg.max_time_to_expiry_s:
+        if ttm_s < cfg.min_time_to_expiry_s:
+            if state is not None:
+                trades.append(_close_settle(state, outcome, cfg))
+                state = None
+            break
+        if ttm_s > cfg.max_time_to_expiry_s:
             continue
         bars_slice = btc_bars.loc[: ts]
         if len(bars_slice) < sigma_window_min + 2:
@@ -133,47 +157,32 @@ def backtest_market(
         ttm_years = ttm_s / (cfg.minutes_per_year * 60)
 
         quote_up = quote_edge(
-            "UP",
-            spot=spot,
-            strike=market.reference_price,
-            time_to_expiry=ttm_years,
-            sigma=sigma,
-            market_price=market_up,
-            rate=cfg.risk_free_rate,
-            drift=cfg.drift_override,
+            "UP", spot, market.reference_price, ttm_years, sigma,
+            market_price=market_up, rate=cfg.risk_free_rate, drift=cfg.drift_override,
         )
-        # The opposite side's edge is just the sign-flipped complement.
         quote_down = quote_edge(
-            "DOWN",
-            spot=spot,
-            strike=market.reference_price,
-            time_to_expiry=ttm_years,
-            sigma=sigma,
-            market_price=1.0 - market_up,
-            rate=cfg.risk_free_rate,
-            drift=cfg.drift_override,
+            "DOWN", spot, market.reference_price, ttm_years, sigma,
+            market_price=1.0 - market_up, rate=cfg.risk_free_rate, drift=cfg.drift_override,
         )
 
-        picks = [q for q in (quote_up, quote_down) if q.edge > cfg.edge_threshold]
-        if not picks:
+        if state is None:
+            best = max((quote_up, quote_down), key=lambda q: q.edge)
+            if best.edge <= cfg.edge_threshold:
+                continue
+            state = _open(market, best, spot, sigma, ttm_s, unix_ts, cfg)
             continue
-        # Take the side with the largest positive edge. Enter once per market.
-        best = max(picks, key=lambda q: q.edge)
-        trade = _execute(
-            market=market,
-            side=best.side,
-            entry_ts=unix_ts,
-            cfg=cfg,
-            model_price=best.model_price,
-            market_price=best.market_price,
-            edge=best.edge,
-            sigma=sigma,
-            spot=spot,
-            ttm_s=ttm_s,
-            outcome=outcome,
-        )
-        trades.append(trade)
-        break  # single shot per market
+
+        # Already in a position -- check exit conditions.
+        current = quote_up if state.side == "UP" else quote_down
+        reason = _exit_reason(state, current, unix_ts, ttm_s, cfg)
+        if reason is not None:
+            trades.append(_close_early(state, current, unix_ts, reason, cfg))
+            state = None
+            break  # one position per market
+
+    # End of history: either forced settle or no entry at all.
+    if state is not None:
+        trades.append(_close_settle(state, outcome, cfg))
     return trades
 
 
@@ -184,6 +193,7 @@ def backtest_many(
     cfg: Config,
     sigma_window_min: int,
     sigma_estimator: str,
+    resolver: OutcomeResolver | None = None,
 ) -> BacktestResult:
     result = BacktestResult()
     for mkt in markets:
@@ -194,86 +204,121 @@ def backtest_many(
             continue
         result.trades.extend(
             backtest_market(
-                mkt,
-                btc_bars,
-                hist,
-                cfg,
+                mkt, btc_bars, hist, cfg,
                 sigma_window_min=sigma_window_min,
                 sigma_estimator=sigma_estimator,
+                resolver=resolver,
             )
         )
     logger.info(
         "backtest done: %d trades from %d markets (%d skipped)",
-        len(result.trades),
-        result.considered,
-        result.skipped,
+        len(result.trades), result.considered, result.skipped,
     )
     return result
 
 
 # ---------------------------------------------------------------------------
-# Internals
+# Internal position state
 # ---------------------------------------------------------------------------
 
 
-def _infer_outcome(btc_bars: pd.DataFrame, close_ts: int, strike: float) -> str | None:
-    ts = pd.Timestamp(close_ts, unit="s", tz="UTC")
-    if btc_bars.empty or ts < btc_bars.index[0]:
-        return None
-    # First bar whose close is at or after market close.
-    after = btc_bars.loc[ts:]
-    if after.empty:
-        return None
-    settle = float(after["close"].iloc[0])
-    return "UP" if settle > strike else "DOWN"
+@dataclass
+class _Position:
+    market: UpDownMarket
+    side: str
+    entry_ts: int
+    ttm_s_at_entry: int
+    entry_market_price: float
+    entry_model_price: float
+    entry_edge: float
+    fill_price: float
+    stake: float
+    contracts: float
+    sigma: float
+    spot_at_entry: float
+    entry_fee: float
 
 
-def _execute(
-    market: UpDownMarket,
-    side: str,
-    entry_ts: int,
-    cfg: Config,
-    model_price: float,
-    market_price: float,
-    edge: float,
-    sigma: float,
-    spot: float,
-    ttm_s: int,
-    outcome: str,
-) -> Trade:
-    fill_price = min(1.0, max(0.0, market_price + cfg.half_spread))
-    stake = _stake(cfg, model_price, fill_price)
-    # Polymarket buys pay out $1 on win; cost is fill_price per share.
+def _open(market: UpDownMarket, q, spot: float, sigma: float, ttm_s: int, unix_ts: int, cfg: Config) -> _Position:
+    fill_price = min(1.0, max(0.0, q.market_price + cfg.half_spread))
+    stake = _stake(cfg, q.model_price, fill_price)
     contracts = stake / fill_price if fill_price > 0 else 0.0
-    settle = 1.0 if side == outcome else 0.0
-    gross = contracts * (settle - fill_price)
-    fees = contracts * fill_price * (cfg.fee_bps * 1e-4)
+    entry_fee = contracts * fill_price * (cfg.fee_bps * 1e-4)
+    return _Position(
+        market=market, side=q.side,
+        entry_ts=unix_ts, ttm_s_at_entry=ttm_s,
+        entry_market_price=q.market_price,
+        entry_model_price=q.model_price,
+        entry_edge=q.edge,
+        fill_price=fill_price, stake=stake, contracts=contracts,
+        sigma=sigma, spot_at_entry=spot, entry_fee=entry_fee,
+    )
+
+
+def _exit_reason(pos: _Position, current, now_ts: int, ttm_s: int, cfg: Config) -> str | None:
+    if cfg.max_hold_s is not None and (now_ts - pos.entry_ts) >= cfg.max_hold_s:
+        return "max_hold"
+    if ttm_s <= cfg.exit_min_ttm_s:
+        return "near_expiry"
+    if cfg.exit_on_sign_flip and current.edge < 0:
+        return "sign_flip"
+    if cfg.exit_edge_threshold is not None and abs(current.edge) < cfg.exit_edge_threshold:
+        return "edge_collapse"
+    return None
+
+
+def _close_early(pos: _Position, current, now_ts: int, reason: str, cfg: Config) -> Trade:
+    exit_price = min(1.0, max(0.0, current.market_price - cfg.half_spread))
+    exit_fee = pos.contracts * exit_price * (cfg.fee_bps * 1e-4)
+    gross = pos.contracts * (exit_price - pos.fill_price)
     return Trade(
-        condition_id=market.condition_id,
-        slug=market.slug,
-        side=side,
-        entry_ts=entry_ts,
-        close_ts=market.close_ts,
-        entry_market_price=market_price,
-        entry_model_price=model_price,
-        entry_edge=edge,
-        sigma=sigma,
-        spot_at_entry=spot,
-        strike=float(market.reference_price) if market.reference_price else float("nan"),
-        time_to_expiry_s=ttm_s,
-        stake=stake,
-        fill_price=fill_price,
+        condition_id=pos.market.condition_id, slug=pos.market.slug, side=pos.side,
+        entry_ts=pos.entry_ts, exit_ts=now_ts, close_ts=pos.market.close_ts,
+        exit_reason=reason,
+        entry_market_price=pos.entry_market_price,
+        entry_model_price=pos.entry_model_price,
+        entry_edge=pos.entry_edge,
+        exit_model_price=current.model_price,
+        exit_market_price=current.market_price,
+        exit_edge=current.edge,
+        sigma=pos.sigma, spot_at_entry=pos.spot_at_entry,
+        strike=float(pos.market.reference_price) if pos.market.reference_price else float("nan"),
+        time_to_expiry_s=pos.ttm_s_at_entry,
+        stake=pos.stake, contracts=pos.contracts,
+        fill_price=pos.fill_price, exit_price=exit_price,
+        settle_price=float("nan"),
+        pnl=gross - pos.entry_fee - exit_fee,
+        fees=pos.entry_fee + exit_fee,
+    )
+
+
+def _close_settle(pos: _Position, outcome: str, cfg: Config) -> Trade:
+    settle = 1.0 if pos.side == outcome else 0.0
+    gross = pos.contracts * (settle - pos.fill_price)
+    return Trade(
+        condition_id=pos.market.condition_id, slug=pos.market.slug, side=pos.side,
+        entry_ts=pos.entry_ts, exit_ts=pos.market.close_ts, close_ts=pos.market.close_ts,
+        exit_reason="settle",
+        entry_market_price=pos.entry_market_price,
+        entry_model_price=pos.entry_model_price,
+        entry_edge=pos.entry_edge,
+        exit_model_price=pos.entry_model_price,  # unchanged at settle
+        exit_market_price=settle,
+        exit_edge=pos.entry_model_price - settle,
+        sigma=pos.sigma, spot_at_entry=pos.spot_at_entry,
+        strike=float(pos.market.reference_price) if pos.market.reference_price else float("nan"),
+        time_to_expiry_s=pos.ttm_s_at_entry,
+        stake=pos.stake, contracts=pos.contracts,
+        fill_price=pos.fill_price, exit_price=settle,
         settle_price=settle,
-        pnl=gross - fees,
-        fees=fees,
+        pnl=gross - pos.entry_fee,
+        fees=pos.entry_fee,
     )
 
 
 def _stake(cfg: Config, model_price: float, market_price: float) -> float:
     if cfg.stake_mode == "flat":
         return cfg.flat_stake
-    # Kelly for a binary bet with subjective prob p at fair payout 1/market_price:
-    #   f* = (p * b - q) / b  where b = (1 - market_price)/market_price
     p = model_price
     q = 1.0 - p
     if market_price <= 0 or market_price >= 1:

@@ -85,31 +85,41 @@ class PolymarketClient:
         *,
         start_ts: int | None = None,
         end_ts: int | None = None,
-        interval: str = "1m",
+        interval: str | None = None,
+        fidelity: int | None = None,
         use_cache: bool = True,
     ) -> pd.DataFrame:
         """Return a DataFrame of (timestamp_utc, price) for a CLOB token.
 
-        Polymarket Data API exposes ``/prices-history`` which returns
-        minute-level prices for a token. The schema has shifted over time;
-        we defensively flatten whatever comes back.
+        The Data API exposes ``/prices-history`` which, per the public
+        Gamma schema, returns::
+
+            {"history": [{"t": <unix_sec>, "p": <price>}, ...],
+             "timeRange": {"start": "...", "end": "..."} | null}
+
+        ``fidelity`` is the bar-size in minutes. ``interval`` (e.g. ``1h``,
+        ``1d``, ``max``) is accepted when ``startTs`` is not given.
         """
-        params: dict[str, Any] = {"market": token_id, "interval": interval}
+        params: dict[str, Any] = {"market": token_id}
         if start_ts is not None:
             params["startTs"] = start_ts
         if end_ts is not None:
             params["endTs"] = end_ts
+        if fidelity is not None:
+            params["fidelity"] = fidelity
+        if interval is not None:
+            params["interval"] = interval
         url = f"{self.data_url}/prices-history?{urllib.parse.urlencode(params)}"
         raw = self._get_json(url, use_cache=use_cache)
         rows = raw.get("history") if isinstance(raw, dict) else raw
         if not rows:
             return pd.DataFrame(columns=["price"], index=pd.DatetimeIndex([], tz="UTC"))
         df = pd.DataFrame(rows)
-        # Common column names across API versions.
         ts_col = _first_present(df, ["t", "timestamp", "ts"])
         px_col = _first_present(df, ["p", "price", "mid"])
         df = df[[ts_col, px_col]].rename(columns={ts_col: "timestamp", px_col: "price"})
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+        df["price"] = df["price"].astype("float64")
         return df.set_index("timestamp").sort_index()
 
     # ---------------------------------------------------------------- CLOB
