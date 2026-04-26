@@ -1,0 +1,106 @@
+[
+  {
+    "tag": "m15_taker",
+    "is_pf": 0.926,
+    "is_ret": -0.06,
+    "is_dd": -0.26,
+    "is_win": 63.39,
+    "is_n": 112,
+    "oos_avg_pf": 0.741,
+    "oos_avg_ret": -0.07,
+    "oos_pfs": [
+      1.163,
+      0.629,
+      0.432
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 100,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0
+    }
+  },
+  {
+    "tag": "m15_maker",
+    "is_pf": 2.287,
+    "is_ret": 0.7,
+    "is_dd": -0.06,
+    "is_win": 69.64,
+    "is_n": 112,
+    "oos_avg_pf": 1.77,
+    "oos_avg_ret": 0.113,
+    "oos_pfs": [
+      2.812,
+      1.04,
+      1.459
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 100,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0
+    }
+  },
+  {
+    "tag": "h1_taker",
+    "is_pf": 0.741,
+    "is_ret": -0.08,
+    "is_dd": -0.13,
+    "is_win": 54.29,
+    "is_n": 35,
+    "oos_avg_pf": 0.427,
+    "oos_avg_ret": -0.717,
+    "oos_pfs": [
+      0.502,
+      0.609,
+      0.17
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 50,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0
+    }
+  },
+  {
+    "tag": "h1_maker",
+    "is_pf": 1.694,
+    "is_ret": 0.12,
+    "is_dd": -0.06,
+    "is_win": 51.61,
+    "is_n": 31,
+    "oos_avg_pf": 1.044,
+    "oos_avg_ret": 0.367,
+    "oos_pfs": [
+      1.301,
+      1.38,
+      0.452
+    ],
+    "best_params": {
+      "ema_fast": 9,
+      "ema_slow": 100,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.0,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0
+    }
+  }
+]
