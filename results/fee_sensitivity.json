@@ -1,0 +1,54 @@
+[
+  {
+    "scenario": "Bitget taker\u5f80\u5fa9 0.12% + slip 0.02%",
+    "fee_rt_pct": 0.12,
+    "slippage_pct": 0.02,
+    "n": 132,
+    "pf": 1.34,
+    "win": 76.52,
+    "ret": 0.32,
+    "max_dd": -0.27,
+    "sharpe": 1.738,
+    "avg": 0.2449,
+    "expectancy": 0.2449
+  },
+  {
+    "scenario": "Bitget maker\u5f80\u5fa9 0.04% + slip 0.01%",
+    "fee_rt_pct": 0.04,
+    "slippage_pct": 0.01,
+    "n": 132,
+    "pf": 2.892,
+    "win": 79.55,
+    "ret": 1.33,
+    "max_dd": -0.11,
+    "sharpe": 7.223,
+    "avg": 1.0111,
+    "expectancy": 1.0111
+  },
+  {
+    "scenario": "MT5\u60f3\u5b9a (\u30b9\u30d7\u30ec\u30c3\u30c95pt\u76f8\u5f53 0.005%)",
+    "fee_rt_pct": 0.005,
+    "slippage_pct": 0.005,
+    "n": 132,
+    "pf": 3.835,
+    "win": 80.3,
+    "ret": 1.73,
+    "max_dd": -0.08,
+    "sharpe": 9.372,
+    "avg": 1.3115,
+    "expectancy": 1.3115
+  },
+  {
+    "scenario": "\u624b\u6570\u6599\u30bc\u30ed (\u7406\u8ad6\u4e0a\u9650)",
+    "fee_rt_pct": 0.0,
+    "slippage_pct": 0.0,
+    "n": 132,
+    "pf": 4.105,
+    "win": 80.3,
+    "ret": 1.84,
+    "max_dd": -0.07,
+    "sharpe": 9.893,
+    "avg": 1.3903,
+    "expectancy": 1.3903
+  }
+]
