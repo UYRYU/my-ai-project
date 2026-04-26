@@ -134,6 +134,12 @@ def main():
     ap.add_argument("--csv", default="data/btcusdt_5m.csv")
     ap.add_argument("--out", default="results")
     ap.add_argument("--folds", type=int, default=4)
+    ap.add_argument("--fee", type=float, default=0.12,
+                    help="Round-trip fee in pct (Bitget taker=0.12, maker=0.04)")
+    ap.add_argument("--slip", type=float, default=0.02,
+                    help="One-way slippage pct")
+    ap.add_argument("--tag", default="",
+                    help="Suffix for output filenames (e.g. h1_maker)")
     ap.add_argument("--quick", action="store_true",
                     help="グリッドを縮小して素早く回す")
     args = ap.parse_args()
@@ -145,29 +151,34 @@ def main():
 
     df = pd.read_csv(args.csv, parse_dates=["time"]).set_index("time")
     print(f"Loaded {len(df)} bars: {df.index[0]} -> {df.index[-1]}")
+    print(f"Fee/slip: RT={args.fee}% slip={args.slip}%")
 
-    base = Params()
+    base = Params(fee_rt_pct=args.fee, slippage_pct=args.slip)
 
     print("\n### 1) Full-period grid search ###")
     top = run_grid(df, base, top_k=10)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with (out_dir / "top10.json").open("w") as f:
+    suffix = f"_{args.tag}" if args.tag else ""
+    top_path = out_dir / f"top10{suffix}.json"
+    set_path = out_dir / f"best{suffix}.set"
+    wf_path  = out_dir / f"walkforward{suffix}.json"
+
+    with top_path.open("w") as f:
         json.dump(top, f, indent=2, default=str)
-    print(f"\nTop 10 saved -> {out_dir/'top10.json'}")
+    print(f"\nTop 10 saved -> {top_path}")
     for i, r in enumerate(top[:5], 1):
         print(f"  #{i} score={r['score']}  pf={r['pf']}  ret={r['ret']}%  "
               f"dd={r['max_dd']}%  n={r['n']}  win={r['win']}%")
         print(f"      params={r['params']}")
 
-    # 最良パラメータを .set に
-    write_set_file(top[0]["params"], out_dir / "best.set")
-    print(f".set saved -> {out_dir/'best.set'}")
+    write_set_file(top[0]["params"], set_path)
+    print(f".set saved -> {set_path}")
 
     print("\n### 2) Walk-Forward Analysis ###")
     wf = walk_forward(df, base, n_folds=args.folds)
-    with (out_dir / "walkforward.json").open("w") as f:
+    with wf_path.open("w") as f:
         json.dump(wf, f, indent=2, default=str)
     if wf:
         oos_pf = [x["pf"] for x in wf if math.isfinite(x["pf"])]

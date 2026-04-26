@@ -53,7 +53,7 @@ class Params:
     trail_step_atr: float = 0.3
     close_on_signal: bool = True
     max_consec_loss: int = 3
-    cooldown_bars: int = 60          # M5なら60本=5h
+    cooldown_bars: int = 24          # 24本（M5=2h, M15=6h, H1=24h）
     risk_pct: float = 0.0            # 0なら固定ロット (デフォは固定の方が解釈しやすい)
     fixed_qty: float = 0.01          # BTC 単位 (Bitget)
     # Bitget 想定の手数料/スリッページ
