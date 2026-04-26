@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.DS_Store
+
+# Real fetched data (large, regenerable). Synth data is committed for repro.
+data/btcusdt_*.csv
+!data/btcusdt_5m_synth.csv
+
+# MT5 build artifacts
+mt5/*.ex5
