@@ -1,0 +1,109 @@
+{
+  "signal_corr": {
+    "BTCUSDT": {
+      "BTCUSDT": 1.0,
+      "ETHUSDT": 0.0195,
+      "DOGEUSDT": 0.0166,
+      "XRPUSDT": 0.0657
+    },
+    "ETHUSDT": {
+      "BTCUSDT": 0.0195,
+      "ETHUSDT": 1.0,
+      "DOGEUSDT": -0.014,
+      "XRPUSDT": 0.0536
+    },
+    "DOGEUSDT": {
+      "BTCUSDT": 0.0166,
+      "ETHUSDT": -0.014,
+      "DOGEUSDT": 1.0,
+      "XRPUSDT": 0.0057
+    },
+    "XRPUSDT": {
+      "BTCUSDT": 0.0657,
+      "ETHUSDT": 0.0536,
+      "DOGEUSDT": 0.0057,
+      "XRPUSDT": 1.0
+    }
+  },
+  "held_corr": {
+    "BTCUSDT": {
+      "BTCUSDT": 1.0,
+      "ETHUSDT": 0.0242,
+      "DOGEUSDT": 0.0184,
+      "XRPUSDT": 0.0783
+    },
+    "ETHUSDT": {
+      "BTCUSDT": 0.0242,
+      "ETHUSDT": 1.0,
+      "DOGEUSDT": -0.0155,
+      "XRPUSDT": 0.0619
+    },
+    "DOGEUSDT": {
+      "BTCUSDT": 0.0184,
+      "ETHUSDT": -0.0155,
+      "DOGEUSDT": 1.0,
+      "XRPUSDT": 0.0074
+    },
+    "XRPUSDT": {
+      "BTCUSDT": 0.0783,
+      "ETHUSDT": 0.0619,
+      "DOGEUSDT": 0.0074,
+      "XRPUSDT": 1.0
+    }
+  },
+  "avg_concurrent": 1.912,
+  "max_concurrent": 4,
+  "return_corr": {
+    "BTCUSDT": {
+      "BTCUSDT": 1.0,
+      "ETHUSDT": 0.5238,
+      "DOGEUSDT": -0.4785,
+      "XRPUSDT": 0.2033
+    },
+    "ETHUSDT": {
+      "BTCUSDT": 0.5238,
+      "ETHUSDT": 1.0,
+      "DOGEUSDT": -0.4132,
+      "XRPUSDT": 0.0234
+    },
+    "DOGEUSDT": {
+      "BTCUSDT": -0.4785,
+      "ETHUSDT": -0.4132,
+      "DOGEUSDT": 1.0,
+      "XRPUSDT": 0.4475
+    },
+    "XRPUSDT": {
+      "BTCUSDT": 0.2033,
+      "ETHUSDT": 0.0234,
+      "DOGEUSDT": 0.4475,
+      "XRPUSDT": 1.0
+    }
+  },
+  "individual": {
+    "BTCUSDT": {
+      "dd": 0.0,
+      "sharpe": 8.696,
+      "avg_monthly_ret": 66.881
+    },
+    "ETHUSDT": {
+      "dd": 0.0,
+      "sharpe": 5.156,
+      "avg_monthly_ret": 372.329
+    },
+    "DOGEUSDT": {
+      "dd": 0.0,
+      "sharpe": 7.312,
+      "avg_monthly_ret": 94.408
+    },
+    "XRPUSDT": {
+      "dd": 0.0,
+      "sharpe": 7.325,
+      "avg_monthly_ret": 164.671
+    }
+  },
+  "portfolio": {
+    "avg_monthly_ret_pct": 174.572,
+    "max_dd_pct": 0.0,
+    "sharpe": 8.964
+  }
+}
