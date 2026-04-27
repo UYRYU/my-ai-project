@@ -6,7 +6,7 @@
 //|  - Bitget 相当の手数料を Slippage パラメータで吸収               |
 //+------------------------------------------------------------------+
 #property copyright "my-ai-project"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -25,11 +25,19 @@ input int      ATR_Period      = 14;
 input double   ATR_MinMult     = 1.0;    // ATR が直近平均の何倍以上で許可
 
 //--- Inputs: exits (ATR-proportional)
-input double   TP_ATR_Mult     = 4.0;    // TP = ATR × この倍率
-input double   SL_ATR_Mult     = 1.0;    // SL = ATR × この倍率 (RR 4:1)
+input double   TP_ATR_Mult     = 4.0;    // TP = ATR × この倍率 (TrailOnly=true なら無視)
+input double   SL_ATR_Mult     = 1.0;    // SL = ATR × この倍率
 input double   TrailStart_ATR  = 0.5;    // 含み益が ATR×これを超えたら発動
 input double   TrailStep_ATR   = 0.3;    // ATR×これ刻みで追従
 input bool     CloseOnSignal   = true;   // 逆シグナルで早期決済
+input bool     TrailOnly       = false;  // true: TP無効、トレールのみで決済 (大トレンド狙い)
+
+//--- Inputs: trend filters (新)
+input int      ADX_Period      = 14;
+input double   ADX_Min         = 0.0;    // >0 で ADX フィルタ有効 (推奨 20-30)
+input ENUM_TIMEFRAMES HTF_Period = PERIOD_CURRENT;  // 上位足 (PERIOD_CURRENT=無効)
+input int      HTF_EMA_Fast    = 20;
+input int      HTF_EMA_Slow    = 50;
 
 //--- Inputs: risk / sizing
 input double   RiskPercent     = 0.5;    // 1トレードのリスク% (0なら固定ロット)
@@ -45,6 +53,8 @@ input double   FeePercentRT    = 0.12;   // Bitget 想定の往復手数料% (�
 //--- handles
 int hEMAfast=INVALID_HANDLE, hEMAslow=INVALID_HANDLE;
 int hRSI=INVALID_HANDLE, hATR=INVALID_HANDLE;
+int hADX=INVALID_HANDLE;
+int hHTFEMAfast=INVALID_HANDLE, hHTFEMAslow=INVALID_HANDLE;
 
 //--- state
 int      consecLosses = 0;
@@ -61,6 +71,13 @@ int OnInit()
    hEMAslow = iMA(_Symbol, _Period, EMA_Slow, 0, MODE_EMA, PRICE_CLOSE);
    hRSI     = iRSI(_Symbol, _Period, RSI_Period, PRICE_CLOSE);
    hATR     = iATR(_Symbol, _Period, ATR_Period);
+   if(ADX_Min > 0.0)
+      hADX = iADX(_Symbol, _Period, ADX_Period);
+   if(HTF_Period != PERIOD_CURRENT)
+   {
+      hHTFEMAfast = iMA(_Symbol, HTF_Period, HTF_EMA_Fast, 0, MODE_EMA, PRICE_CLOSE);
+      hHTFEMAslow = iMA(_Symbol, HTF_Period, HTF_EMA_Slow, 0, MODE_EMA, PRICE_CLOSE);
+   }
 
    if(hEMAfast==INVALID_HANDLE || hEMAslow==INVALID_HANDLE ||
       hRSI==INVALID_HANDLE || hATR==INVALID_HANDLE)
@@ -68,15 +85,23 @@ int OnInit()
       Print("Indicator init failed");
       return INIT_FAILED;
    }
+   if(ADX_Min > 0.0 && hADX==INVALID_HANDLE)
+   { Print("ADX init failed"); return INIT_FAILED; }
+   if(HTF_Period != PERIOD_CURRENT &&
+      (hHTFEMAfast==INVALID_HANDLE || hHTFEMAslow==INVALID_HANDLE))
+   { Print("HTF EMA init failed"); return INIT_FAILED; }
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
-   if(hEMAfast!=INVALID_HANDLE) IndicatorRelease(hEMAfast);
-   if(hEMAslow!=INVALID_HANDLE) IndicatorRelease(hEMAslow);
-   if(hRSI    !=INVALID_HANDLE) IndicatorRelease(hRSI);
-   if(hATR    !=INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hEMAfast    !=INVALID_HANDLE) IndicatorRelease(hEMAfast);
+   if(hEMAslow    !=INVALID_HANDLE) IndicatorRelease(hEMAslow);
+   if(hRSI        !=INVALID_HANDLE) IndicatorRelease(hRSI);
+   if(hATR        !=INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hADX        !=INVALID_HANDLE) IndicatorRelease(hADX);
+   if(hHTFEMAfast !=INVALID_HANDLE) IndicatorRelease(hHTFEMAfast);
+   if(hHTFEMAslow !=INVALID_HANDLE) IndicatorRelease(hHTFEMAslow);
 }
 
 //+------------------------------------------------------------------+
@@ -215,8 +240,31 @@ void OnTick()
    if(n>0) atrAvg /= n;
    bool volOK = (atrAvg>0.0 && atrPrev >= atrAvg * ATR_MinMult);
 
-   bool buySignal  = (emaF > emaS) && (rsi >= RSI_BuyMin)  && volOK;
-   bool sellSignal = (emaF < emaS) && (rsi <= RSI_SellMax) && volOK;
+   // ADX フィルタ (トレンド強度)
+   bool adxOK = true;
+   if(ADX_Min > 0.0 && hADX != INVALID_HANDLE)
+   {
+      double adxVal;
+      if(!GetBuf(hADX, 1, adxVal)) return;
+      adxOK = (adxVal >= ADX_Min);
+   }
+
+   // 上位足 EMA トレンド方向
+   int htfDir = 0;  // 0=未使用, +1=上昇, -1=下降
+   if(HTF_Period != PERIOD_CURRENT &&
+      hHTFEMAfast != INVALID_HANDLE && hHTFEMAslow != INVALID_HANDLE)
+   {
+      double hf, hs;
+      if(GetBuf(hHTFEMAfast, 1, hf) && GetBuf(hHTFEMAslow, 1, hs))
+         htfDir = (hf > hs) ? 1 : (hf < hs ? -1 : 0);
+   }
+   bool htfLongOK  = (htfDir == 0) || (htfDir > 0);
+   bool htfShortOK = (htfDir == 0) || (htfDir < 0);
+
+   bool buySignal  = (emaF > emaS) && (rsi >= RSI_BuyMin)
+                     && volOK && adxOK && htfLongOK;
+   bool sellSignal = (emaF < emaS) && (rsi <= RSI_SellMax)
+                     && volOK && adxOK && htfShortOK;
 
    // 逆シグナルで早期決済
    if(CloseOnSignal)
@@ -235,14 +283,14 @@ void OnTick()
    if(buySignal)
    {
       double sl = ask - slDist;
-      double tp = ask + tpDist;
+      double tp = TrailOnly ? 0.0 : ask + tpDist;  // TrailOnly: TP無し (トレールで決済)
       double lot = CalcLotByRisk(slDist);
       trade.Buy(lot, _Symbol, ask, sl, tp, "CryptoScalper");
    }
    else if(sellSignal)
    {
       double sl = bid + slDist;
-      double tp = bid - tpDist;
+      double tp = TrailOnly ? 0.0 : bid - tpDist;
       double lot = CalcLotByRisk(slDist);
       trade.Sell(lot, _Symbol, bid, sl, tp, "CryptoScalper");
    }

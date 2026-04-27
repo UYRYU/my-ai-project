@@ -24,6 +24,9 @@ GRID = dict(
     sl_atr_mult   = [1.0, 1.5, 2.0],
     trail_start_atr = [1.0, 2.0],
     trail_step_atr  = [0.5, 1.0],
+    adx_min       = [0.0, 20.0, 25.0, 30.0],   # 0=無効
+    htf_ratio     = [0, 4],                     # 0=無効, 4=4x上位足
+    trail_only    = [False, True],
 )
 
 
@@ -114,6 +117,12 @@ def write_set_file(params: dict, out_path: Path):
         SL_ATR_Mult=params["sl_atr_mult"],
         TrailStart_ATR=params["trail_start_atr"],
         TrailStep_ATR=params["trail_step_atr"],
+        ADX_Period=14,
+        ADX_Min=params.get("adx_min", 0.0),
+        HTF_Ratio=params.get("htf_ratio", 0),
+        HTF_EMA_Fast=20,
+        HTF_EMA_Slow=50,
+        TrailOnly="true" if params.get("trail_only") else "false",
         CloseOnSignal="true",
         RiskPercent=0.0,           # Pythonバックテストと揃える: 固定ロット
         FixedLot=0.01,

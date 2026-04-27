@@ -36,6 +36,46 @@ def atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     return tr.ewm(alpha=1.0 / n, adjust=False).mean()
 
 
+def adx(df: pd.DataFrame, n: int = 14) -> pd.Series:
+    """Wilder's ADX. トレンド強度 (0-100, >25 = トレンドあり)."""
+    h, l, c = df["high"], df["low"], df["close"]
+    up = h.diff()
+    dn = -l.diff()
+    plus_dm = np.where((up > dn) & (up > 0), up, 0.0)
+    minus_dm = np.where((dn > up) & (dn > 0), dn, 0.0)
+    pc = c.shift(1)
+    tr = pd.concat([(h - l).abs(), (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
+    atr_w = tr.ewm(alpha=1.0 / n, adjust=False).mean()
+    plus_di = 100.0 * pd.Series(plus_dm, index=df.index).ewm(alpha=1.0/n, adjust=False).mean() / atr_w
+    minus_di = 100.0 * pd.Series(minus_dm, index=df.index).ewm(alpha=1.0/n, adjust=False).mean() / atr_w
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, np.nan)
+    return dx.ewm(alpha=1.0 / n, adjust=False).mean().fillna(0.0)
+
+
+def htf_trend(close: pd.Series, htf_ratio: int, fast: int, slow: int) -> pd.Series:
+    """上位足 EMA トレンド方向 (+1 up / -1 down / 0 flat-or-na).
+    htf_ratio: 現在TFを何倍にリサンプリングするか (0 or 1 = 無効)."""
+    if htf_ratio <= 1:
+        return pd.Series(0, index=close.index)
+    rs = close.resample(f"{htf_ratio}min" if False else _infer_htf(close, htf_ratio)).last().dropna()
+    ef = ema(rs, fast)
+    es = ema(rs, slow)
+    direction = pd.Series(0, index=rs.index, dtype=int)
+    direction[ef > es] = 1
+    direction[ef < es] = -1
+    return direction.reindex(close.index, method="ffill").fillna(0).astype(int)
+
+
+def _infer_htf(close: pd.Series, ratio: int) -> str:
+    """現在足の周期を index から推定して上位足 freq を返す."""
+    if len(close.index) < 2:
+        return f"{ratio}min"
+    # 最頻値ベース
+    diffs = close.index.to_series().diff().dropna()
+    base_min = int(round(diffs.dt.total_seconds().median() / 60))
+    return f"{base_min * ratio}min"
+
+
 # --------------------------- Params ---------------------------
 
 @dataclass
@@ -54,6 +94,13 @@ class Params:
     close_on_signal: bool = True
     max_consec_loss: int = 3
     cooldown_bars: int = 24          # 24本（M5=2h, M15=6h, H1=24h）
+    # --- トレンドフォロー強化 (新) ---
+    adx_period: int = 14
+    adx_min: float = 0.0             # >0 で ADX フィルタ有効 (推奨 20-30)
+    htf_ratio: int = 0               # >1 で上位足 EMA フィルタ有効 (e.g. 4=H1 from M15)
+    htf_ema_fast: int = 20
+    htf_ema_slow: int = 50
+    trail_only: bool = False         # True なら TP 無視, トレールで決済
     risk_pct: float = 0.0            # 0なら固定ロット (デフォは固定の方が解釈しやすい)
     fixed_qty: float = 0.01          # BTC 単位 (Bitget)
     # Bitget 想定の手数料/スリッページ
@@ -119,6 +166,12 @@ def prepare(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     out["rsi"] = rsi(out["close"], p.rsi_period)
     out["atr"] = atr(out, p.atr_period)
     out["atr_avg20"] = out["atr"].rolling(20, min_periods=5).mean()
+    out["adx"] = adx(out, p.adx_period) if p.adx_min > 0 else 100.0
+    if p.htf_ratio > 1:
+        out["htf_dir"] = htf_trend(out["close"], p.htf_ratio,
+                                   p.htf_ema_fast, p.htf_ema_slow)
+    else:
+        out["htf_dir"] = 0
     return out
 
 
@@ -210,8 +263,14 @@ def backtest(df: pd.DataFrame, p: Params) -> BacktestResult:
             continue
 
         vol_ok = prev.atr >= prev.atr_avg20 * p.atr_min_mult
-        buy  = (prev.ema_f > prev.ema_s) and (prev.rsi >= p.rsi_buy_min)  and vol_ok
-        sell = (prev.ema_f < prev.ema_s) and (prev.rsi <= p.rsi_sell_max) and vol_ok
+        adx_ok = (p.adx_min <= 0) or (getattr(prev, "adx", 100.0) >= p.adx_min)
+        htf_dir = int(getattr(prev, "htf_dir", 0))
+        htf_long_ok  = (p.htf_ratio <= 1) or (htf_dir >= 0)   # 0=未確定でも許可、-1で禁止
+        htf_short_ok = (p.htf_ratio <= 1) or (htf_dir <= 0)
+        buy  = ((prev.ema_f > prev.ema_s) and (prev.rsi >= p.rsi_buy_min)
+                and vol_ok and adx_ok and htf_long_ok)
+        sell = ((prev.ema_f < prev.ema_s) and (prev.rsi <= p.rsi_sell_max)
+                and vol_ok and adx_ok and htf_short_ok)
 
         if buy or sell:
             entry_raw = r.open
@@ -222,6 +281,9 @@ def backtest(df: pd.DataFrame, p: Params) -> BacktestResult:
                 qty = max(p.fixed_qty * 0.1, risk_money / max(sl_d, 1e-9))
             else:
                 qty = p.fixed_qty
+            # trail_only=True なら TP を遠くへ追いやって実質無効化
+            if p.trail_only:
+                tp_d = atr_e * 1e6
             if buy:
                 entry = entry_raw * (1.0 + slip)
                 open_trade = Trade("long", ts, entry, qty, entry - sl_d, entry + tp_d)
