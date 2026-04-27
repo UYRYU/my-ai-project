@@ -1,0 +1,55 @@
+[
+  {
+    "tag": "m1_taker",
+    "is_pf": 0.045,
+    "is_ret": -4.26,
+    "is_dd": -4.26,
+    "is_n": 381,
+    "oos_avg_pf": 0.035,
+    "oos_avg_ret": -1.19,
+    "oos_pfs": [
+      0.004,
+      0.049,
+      0.052
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 100,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 55.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 3.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0
+    }
+  },
+  {
+    "tag": "m1_maker",
+    "is_pf": 0.541,
+    "is_ret": -0.44,
+    "is_dd": -0.44,
+    "is_n": 168,
+    "oos_avg_pf": 0.5,
+    "oos_avg_ret": -0.23,
+    "oos_pfs": [
+      0.328,
+      0.769,
+      0.403
+    ],
+    "best_params": {
+      "ema_fast": 9,
+      "ema_slow": 50,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0,
+      "atr_min_mult": 1.2,
+      "tp_atr_mult": 3.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 0.5,
+      "adx_min": 20.0,
+      "htf_ratio": 4,
+      "trail_only": false
+    }
+  }
+]
