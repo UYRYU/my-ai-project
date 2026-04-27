@@ -26,14 +26,30 @@ def load_set(path: Path) -> dict:
 
 
 def make_params(s: dict) -> Params:
-    return Params(
+    kw = dict(
         ema_fast=int(s["EMA_Fast"]), ema_slow=int(s["EMA_Slow"]),
         rsi_period=int(s["RSI_Period"]),
         rsi_buy_min=float(s["RSI_BuyMin"]), rsi_sell_max=float(s["RSI_SellMax"]),
         atr_period=int(s["ATR_Period"]), atr_min_mult=float(s["ATR_MinMult"]),
         tp_atr_mult=float(s["TP_ATR_Mult"]), sl_atr_mult=float(s["SL_ATR_Mult"]),
-        trail_start_atr=float(s["TrailStart_ATR"]), trail_step_atr=float(s["TrailStep_ATR"]),
+        trail_start_atr=float(s["TrailStart_ATR"]),
+        trail_step_atr=float(s["TrailStep_ATR"]),
     )
+    # 新フィルタ (.set に含まれていれば反映)
+    if "ADX_Period" in s:
+        kw["adx_period"] = int(s["ADX_Period"])
+    if "ADX_Min" in s:
+        kw["adx_min"] = float(s["ADX_Min"])
+    if "HTF_Ratio" in s:
+        kw["htf_ratio"] = int(s["HTF_Ratio"])
+    if "HTF_EMA_Fast" in s:
+        kw["htf_ema_fast"] = int(s["HTF_EMA_Fast"])
+    if "HTF_EMA_Slow" in s:
+        kw["htf_ema_slow"] = int(s["HTF_EMA_Slow"])
+    if "TrailOnly" in s:
+        v = s["TrailOnly"]
+        kw["trail_only"] = (str(v).lower() in ("true", "1", "yes"))
+    return Params(**kw)
 
 
 def main():
