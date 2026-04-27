@@ -1,0 +1,118 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "is_pf": 2.532,
+    "is_ret": 43044.41,
+    "is_dd": -3.89,
+    "is_n": 2343,
+    "is_win": 70.59,
+    "oos_avg_pf": 2.734,
+    "oos_avg_ret": 101.373,
+    "oos_pfs": [
+      4.112,
+      1.671,
+      2.418
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 100,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 4,
+      "trail_only": true,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    }
+  },
+  {
+    "symbol": "ETHUSDT",
+    "is_pf": 4.478,
+    "is_ret": 4282613389.28,
+    "is_dd": -3.56,
+    "is_n": 3327,
+    "is_win": 77.55,
+    "oos_avg_pf": 5.168,
+    "oos_avg_ret": 11233.037,
+    "oos_pfs": [
+      6.243,
+      4.989,
+      4.273
+    ],
+    "best_params": {
+      "ema_fast": 34,
+      "ema_slow": 200,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": true,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    }
+  },
+  {
+    "symbol": "DOGEUSDT",
+    "is_pf": 3.101,
+    "is_ret": 257828.13,
+    "is_dd": -3.59,
+    "is_n": 2196,
+    "is_win": 70.63,
+    "oos_avg_pf": 3.17,
+    "oos_avg_ret": 555.237,
+    "oos_pfs": [
+      2.903,
+      3.681,
+      2.926
+    ],
+    "best_params": {
+      "ema_fast": 34,
+      "ema_slow": 100,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 10.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": false,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    }
+  },
+  {
+    "symbol": "XRPUSDT",
+    "is_pf": 3.561,
+    "is_ret": 7673944.23,
+    "is_dd": -4.44,
+    "is_n": 2935,
+    "is_win": 71.55,
+    "oos_avg_pf": 3.304,
+    "oos_avg_ret": 2245.137,
+    "oos_pfs": [
+      3.076,
+      3.515,
+      3.32
+    ],
+    "best_params": {
+      "ema_fast": 20,
+      "ema_slow": 200,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": true,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    }
+  }
+]
