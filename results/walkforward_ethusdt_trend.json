@@ -1,0 +1,83 @@
+[
+  {
+    "n": 910,
+    "pf": 6.243,
+    "win": 78.35,
+    "ret": 15967.3,
+    "max_dd": -3.51,
+    "sharpe": 6.391,
+    "avg": 1754.6483,
+    "expectancy": 1754.6483,
+    "score": 12.0477,
+    "params": {
+      "ema_fast": 20,
+      "ema_slow": 200,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": true,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    },
+    "fold": 1,
+    "is_score": 10.4257
+  },
+  {
+    "n": 876,
+    "pf": 4.989,
+    "win": 77.28,
+    "ret": 9450.35,
+    "max_dd": -2.93,
+    "sharpe": 6.269,
+    "avg": 1078.8068,
+    "expectancy": 1078.8068,
+    "score": 9.6856,
+    "params": {
+      "ema_fast": 34,
+      "ema_slow": 100,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 6.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": true,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    },
+    "fold": 2,
+    "is_score": 12.3145
+  },
+  {
+    "n": 877,
+    "pf": 4.273,
+    "win": 76.74,
+    "ret": 8281.46,
+    "max_dd": -3.48,
+    "sharpe": 5.666,
+    "avg": 944.2947,
+    "expectancy": 944.2947,
+    "score": 8.2486,
+    "params": {
+      "ema_fast": 20,
+      "ema_slow": 200,
+      "atr_min_mult": 0.8,
+      "tp_atr_mult": 10.0,
+      "sl_atr_mult": 1.5,
+      "trail_start_atr": 2.0,
+      "trail_step_atr": 1.0,
+      "adx_min": 30.0,
+      "htf_ratio": 0,
+      "trail_only": false,
+      "rsi_buy_min": 55.0,
+      "rsi_sell_max": 45.0
+    },
+    "fold": 3,
+    "is_score": 10.2202
+  }
+]
