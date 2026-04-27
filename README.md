@@ -1,21 +1,80 @@
-# my-ai-project — Crypto Scalper (EMA + RSI + ATR)
+# my-ai-project — Crypto Trend EA (EMA + RSI + ATR + ADX)
 
-XAU_Scalper_EMA_RSI（ゴールド向け好調EA）を**BTC等の仮想通貨**へ移植・最適化するプロジェクト。
-MT5 で最適化を回しつつ、実運用は **Bitget** を想定（手数料を厳密にバックテストへ反映）。
+XAU_Scalper_EMA_RSI（ゴールド向け好調EA）を**BTC/ETH/DOGE/XRP**へ移植し、
+**ADX 30 トレンドフィルタ**を追加した強化版。MT5 で最適化、実運用は **Bitget Maker** 想定。
+
+## TL;DR
+
+**勝ち筋**: M15 + Bitget Maker (RT 0.04%) + ADX≥30 + EMA 20/100~34/200 + TP=ATR×6-10 / SL=ATR×1.5
+
+**OOS WFA 結果（合成365日, 3-fold）**:
+
+| Symbol | OOS PF avg | OOS PFs (各 fold) | 評価 |
+|---|---|---|---|
+| BTCUSDT | 2.73 | [4.11, 1.67, 2.42] | ◯ |
+| ETHUSDT | **5.17** | [6.24, 4.99, 4.27] | ◎ |
+| **DOGEUSDT** | **3.17** | **[2.90, 3.68, 2.93]** | **◎ 最安定** |
+| XRPUSDT | (実行中) | | |
+
+**敗北パターン**: M1 (taker / maker 両方とも OOS PF < 0.6), Bitget Taker (TF問わず OOS PF < 1)
+
+## クイックスタート
+
+```bash
+# 1) 全シンボル一発最適化 (合成データで動作確認)
+python3 backtest/full_pipeline.py --tf 15 --days 365 --fee 0.04
+
+# 2) 実BTC データで再検証 (要ネット)
+python3 backtest/full_pipeline.py --symbols BTCUSDT --tf 15 --days 730 \
+    --fetch-real --fee 0.04
+
+# 3) 最良パラメータの感度確認
+python3 backtest/sensitivity.py --csv data/btcusdt_15m_synth.csv \
+    --set results/best_btcusdt_trend.set
+
+# 4) Bitget 価格でペーパートレード (リスクゼロ、注文出さない)
+python3 backtest/paper_runner.py --symbol BTCUSDT --tf 15m \
+    --set results/best_btcusdt_trend.set --interval 60
+
+# 5) MT5 EA としても使う
+# mt5/CryptoScalper_EMA_RSI_ATR.mq5 を MT5 → MQL5/Experts/ に配置
+# results/best_btcusdt_trend.set をストラテジーテスターでロード
+```
+
+
 
 ## 構成
 
 ```
-mt5/CryptoScalper_EMA_RSI_ATR.mq5   # MT5 EA本体 (ATR比例化, 24/7前提)
-backtest/strategy.py                # 同ロジックの Python 版 (オフライン最適化用)
-backtest/fetch_data.py              # Bitget public API から K線取得 (BTCUSDT 等)
-backtest/synth_data.py              # 外部API使えない環境向けの合成データ生成
-backtest/optimize.py                # グリッド + ウォークフォワード最適化
-backtest/compare_fees.py            # 手数料感度分析 (Bitget taker/maker/手数料ゼロ)
-results/best.set                    # 最良パラメータ (MT5 .set フォーマット)
-results/top10.json                  # 全期間最適化トップ10
-results/walkforward.json            # WFA 各fold OOS結果
-results/fee_sensitivity.json        # 手数料シナリオ別の成績
+mt5/CryptoScalper_EMA_RSI_ATR.mq5   # MT5 EA本体 (v1.10 ADX/HTF/TrailOnly対応)
+backtest/
+  strategy.py                       # Pythonバックテストエンジン
+  optimize.py                       # 基本グリッド + ウォークフォワード最適化
+  synth_data.py                     # 合成OHLCV生成 (BTC/ETH/DOGE/XRP/SOL)
+  fetch_data.py                     # 旧 Bitget fetcher (短期間用)
+  bitget_public.py                  # 本格的な Bitget public client (新)
+  compare_fees.py                   # 手数料感度分析
+  sensitivity.py                    # パラメータ感度テスト (±周辺探索)
+  regime_split.py                   # 月別 + ADXレジーム別の集計
+  run_trend_mode.py                 # M15 maker トレンドモード集中最適化
+  run_multi_symbol.py               # 全シンボル横断最適化
+  run_tf_matrix.py                  # M5/M15/H1 × taker/maker マトリクス
+  run_m1_matrix.py                  # M1 検証 (taker/maker)
+  full_pipeline.py                  # 1コマンド統合パイプライン
+  paper_runner.py                   # Bitget公開APIで紙トレード (注文出さない)
+  test_strategy.py                  # スモークテスト
+results/
+  best_<sym>_trend.set              # 各シンボルの最良パラメータ (MT5 .set形式)
+  walkforward_<sym>_trend.json      # WFA OOS結果
+  multi_symbol_matrix.json          # 全シンボル横並び比較
+  sensitivity_*.json                # 感度テスト出力
+  regime_split_*.json               # レジーム別集計
+  full_report.md                    # full_pipeline 出力レポート
+docs/
+  bitget_bridge.md                  # Bitget本番ブリッジ設計
+data/
+  <sym>_<tf>_synth.csv              # 合成データ
+  <sym>_<tf>.csv                    # 実データ取得済み (.gitignore対象)
 ```
 
 ## ロジック (元EAからの変更点)
