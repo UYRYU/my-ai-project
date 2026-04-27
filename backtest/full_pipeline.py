@@ -218,7 +218,7 @@ def step_report(rows: list[dict], tf_min: int, days: int,
         f"- WFA は 3-fold で OOS 1 fold ≈ {days // 4} 日。",
         f"- OOS PF > 1 が安定すればロバスト, < 1 は過剰最適化のサイン。",
     ]
-    out.write_text("\n".join(lines))
+    out.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nReport saved -> {out}")
     return out
 

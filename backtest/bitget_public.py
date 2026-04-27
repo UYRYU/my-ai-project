@@ -136,8 +136,9 @@ class BitgetPublic:
     # -------------------------- internal --------------------------
 
     def _candles_endpoint(self) -> str:
+        # 履歴用エンドポイントを使う (recent candles は数日分しか返さない)
         if self.cfg.product_type == "spot":
-            return "/api/v2/spot/market/candles"
+            return "/api/v2/spot/market/history-candles"
         return "/api/v2/mix/market/history-candles"
 
     def _request(self, endpoint: str, params: dict) -> dict:
