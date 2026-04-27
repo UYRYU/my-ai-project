@@ -12,11 +12,13 @@ def generate(days: int = 120, tf_min: int = 5, seed: int = 42,
              start_price: float = 60_000.0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     n = days * 24 * (60 // tf_min)
-    # ボラクラスタ (GARCH風) - BTC実測 5m std ~ 0.0007 程度
-    base_vol = 0.0007
+    # ボラ/ドリフトを TF にスケール (sqrt-time / linear-time)
+    tf_scale = (tf_min / 5.0) ** 0.5      # M5 基準で sqrt スケール
+    drift_scale = tf_min / 5.0            # ドリフトは線形
+    base_vol = 0.0007 * tf_scale
     vol = np.zeros(n); vol[0] = base_vol
     for i in range(1, n):
-        vol[i] = 0.93 * vol[i-1] + 0.07 * abs(rng.normal(base_vol, 0.0004))
+        vol[i] = 0.93 * vol[i-1] + 0.07 * abs(rng.normal(base_vol, 0.0004 * tf_scale))
     # トレンド切り替え (3-7日ランダム長 + やや強め, 一部ノイズ区間)
     drift = np.zeros(n)
     i = 0
@@ -26,7 +28,7 @@ def generate(days: int = 120, tf_min: int = 5, seed: int = 42,
         if rng.random() < 0.25:
             d = 0.0  # ノイズ/レンジ区間
         else:
-            d = sign * rng.uniform(0.00010, 0.00040)
+            d = sign * rng.uniform(0.00010, 0.00040) * drift_scale
             sign *= -1.0
         drift[i:i+seg] = d
         i += seg
