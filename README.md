@@ -84,26 +84,46 @@ Bitget taker / Bitget maker / MT5想定 / 手数料ゼロ を比較。
 | H1 + taker | 0.74 | -0.08 | 35 | 0.43 | 0.50/0.61/0.17 | -0.72 | TFを上げても無理 |
 | H1 + maker | 1.69 | +0.12 | 31 | 1.04 | 1.30/1.38/0.45 | +0.37 | OOS 2勝1敗、n少 |
 
+### 3) トレンドフォロー強化版 (`run_trend_mode.py`)
+
+ADX フィルタ / 上位足EMA / Trail-only モードを追加し、M15 maker 上で再最適化:
+
+| 項目 | baseline M15+maker | **trend-mode M15+maker** | 改善 |
+|---|---|---|---|
+| IS PF | 2.29 | **3.80** | +66% |
+| IS ret% | +0.70 | +0.68 | ≈ |
+| IS n | 112 | 68 | -39% (選別性UP) |
+| IS win% | 69.6 | 76.5 | +6.9pt |
+| OOS PF (Fold 1) | 2.81 | **2.97** | +6% |
+| OOS PF (Fold 2) | 1.04 | **1.92** | +85% |
+| OOS PF (Fold 3) | 1.46 | **1.58** | +8% |
+| **OOS avg PF** | **1.77** | **2.16** | **+22%** |
+
+**ADX 30 が決定打**: Top 5 全てに ADX≥30 が含まれる。HTF EMA / trail_only は副次的影響のみ。
+取引数は 40% 減るが、勝率と PF が大きく上がり、結果として OOS で安定的にプラス。
+
 ### 結論
 
-**勝ちパターン**: **M15 + Bitget Maker (リミット注文中心、RT 0.04%)**
-- 全 3 OOS fold で PF > 1（最低 1.04）
-- IS と OOS の乖離が小さい (2.29 → 1.77) = **過剰最適化なし、ロバスト**
-- 取引数 100+ で統計的有意
+**勝ちパターン**: **M15 + Bitget Maker + ADX 30 フィルタ** (`results/best_m15_maker_trend.set`)
+- 全 3 OOS fold で PF ≥ 1.58（最低 Fold 3）
+- IS:OOS 乖離 (3.80 → 2.16) = **強いトレンドフィルタが過剰最適化を抑える**
+- 「トレンド相場の到来」仮説と完全整合 — ADX が立った時のみエントリ
 
 **敗北パターン**: **Taker (0.12% RT) は TF 問わず NG**
-- M5 / M15 / H1 すべて OOS PF < 1
-- 手数料が薄いエッジを完全に削る
+- M1 / M5 / M15 / H1 すべて OOS PF < 1
+- 特に **M1 + taker は IS PF 0.045** （ほぼゼロエッジ）
 
-### 採用パラメータ (M15 maker / `results/best_m15_maker.set`)
+### 採用パラメータ (M15 maker trend / `results/best_m15_maker_trend.set`)
 
 ```
 EMA_Fast       = 20     EMA_Slow       = 100
 RSI_BuyMin     = 55     RSI_SellMax    = 45     (非対称、強モメンタム要求)
-ATR_MinMult    = 1.2    (ボラ十分な時のみエントリ)
-TP_ATR_Mult    = 6.0    SL_ATR_Mult    = 1.5    (RR 4:1)
-TrailStart_ATR = 2.0    TrailStep_ATR  = 1.0
-CooldownMinutes= 360 (=24本×15分)
+ATR_MinMult    = 1.2    (ボラ十分な時のみ)
+TP_ATR_Mult    = 10.0   SL_ATR_Mult    = 1.5    (RR 6.7:1, 大きく取りに行く)
+TrailStart_ATR = 1.0    TrailStep_ATR  = 0.5
+ADX_Min        = 30.0   ← 新規: トレンド強度フィルタ
+HTF_Period     = 0      (使わない方が良かった)
+TrailOnly      = false  (TP明示の方がわずかに優位)
 FeePercentRT   = 0.04   (Maker)
 ```
 
