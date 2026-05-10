@@ -1,0 +1,22 @@
+{
+  "strategy": "dummy",
+  "symbol": "BTC/USDT",
+  "tf": "1h",
+  "period": "2024-01-01:2024-12-31",
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "passed": true,
+  "fails": [],
+  "warns": [],
+  "num_trades": 150,
+  "win_rate": 0.6667,
+  "profit_factor": 2.8672,
+  "max_drawdown": 0.0389,
+  "sharpe": 4.8841,
+  "expected_value": 78.5796,
+  "total_return": 1.1787,
+  "gross_profit": 18099.55,
+  "gross_loss": 6312.61,
+  "final_equity": 21786.9
+}
