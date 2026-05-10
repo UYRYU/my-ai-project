@@ -1,0 +1,148 @@
+{
+  "strategy": "dummy",
+  "symbol": "BTC/USDT",
+  "tf": "1h",
+  "period": "2023-01-01:2025-01-01",
+  "is_months": 12,
+  "oos_months": 3,
+  "step_months": 3,
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "n_windows": 4,
+  "windows": [
+    {
+      "is_period": "2023-01-01:2024-01-01",
+      "oos_period": "2024-01-01:2024-04-01",
+      "params": {
+        "threshold": 0.7183,
+        "seed": 727131
+      },
+      "is_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.6467,
+        "profit_factor": 2.0445,
+        "max_drawdown": 0.0575,
+        "sharpe": 3.4138,
+        "expected_value": 58.528,
+        "total_return": 0.8779,
+        "final_equity": 18779.18
+      },
+      "oos_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.6,
+        "profit_factor": 1.8452,
+        "max_drawdown": 0.2168,
+        "sharpe": 5.1445,
+        "expected_value": 51.0823,
+        "total_return": 0.7662,
+        "final_equity": 17662.37
+      }
+    },
+    {
+      "is_period": "2023-04-01:2024-04-01",
+      "oos_period": "2024-04-01:2024-07-01",
+      "params": {
+        "threshold": 0.4244,
+        "seed": 922540
+      },
+      "is_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.66,
+        "profit_factor": 2.4748,
+        "max_drawdown": 0.0371,
+        "sharpe": 4.4643,
+        "expected_value": 70.9191,
+        "total_return": 1.0638,
+        "final_equity": 20637.84
+      },
+      "oos_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.56,
+        "profit_factor": 1.7416,
+        "max_drawdown": 0.0687,
+        "sharpe": 5.3211,
+        "expected_value": 42.5295,
+        "total_return": 0.6379,
+        "final_equity": 16379.39
+      }
+    },
+    {
+      "is_period": "2023-07-01:2024-07-01",
+      "oos_period": "2024-07-01:2024-10-01",
+      "params": {
+        "threshold": 0.4479,
+        "seed": 866809
+      },
+      "is_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.5667,
+        "profit_factor": 1.668,
+        "max_drawdown": 0.1073,
+        "sharpe": 2.4014,
+        "expected_value": 42.4165,
+        "total_return": 0.6362,
+        "final_equity": 16362.49
+      },
+      "oos_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.5733,
+        "profit_factor": 1.6301,
+        "max_drawdown": 0.1999,
+        "sharpe": 4.5876,
+        "expected_value": 41.4621,
+        "total_return": 0.6219,
+        "final_equity": 16219.34
+      }
+    },
+    {
+      "is_period": "2023-10-01:2024-10-01",
+      "oos_period": "2024-10-01:2025-01-01",
+      "params": {
+        "threshold": 0.2219,
+        "seed": 385564
+      },
+      "is_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.6,
+        "profit_factor": 1.8697,
+        "max_drawdown": 0.0641,
+        "sharpe": 3.2299,
+        "expected_value": 51.2753,
+        "total_return": 0.7691,
+        "final_equity": 17691.22
+      },
+      "oos_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.6333,
+        "profit_factor": 2.3342,
+        "max_drawdown": 0.0755,
+        "sharpe": 8.4933,
+        "expected_value": 69.11,
+        "total_return": 1.0367,
+        "final_equity": 20366.51
+      }
+    }
+  ],
+  "combined_oos_period": "2024-01-01:2025-01-01",
+  "combined_oos": {
+    "num_trades": 600,
+    "win_rate": 0.5917,
+    "profit_factor": 1.8674,
+    "max_drawdown": 0.2168,
+    "sharpe": 5.0063,
+    "expected_value": 51.046,
+    "total_return": 3.0628,
+    "final_equity": 40627.59
+  },
+  "stability": {
+    "mean_is_pf": 2.0143,
+    "mean_oos_pf": 1.8878,
+    "oos_pf_stddev": 0.2687,
+    "is_oos_degradation": 0.0628,
+    "fails": [],
+    "warns": [],
+    "passed": true
+  },
+  "passed": true
+}
