@@ -1,0 +1,270 @@
+{
+  "strategy": "dual_ema_atr",
+  "symbol": "BTC/USDT",
+  "tf": "1h",
+  "period": "2022-01-01:2025-01-01",
+  "is_months": 12,
+  "oos_months": 3,
+  "step_months": 3,
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "n_windows": 8,
+  "windows": [
+    {
+      "is_period": "2022-01-01:2023-01-01",
+      "oos_period": "2023-01-01:2023-04-01",
+      "params": {
+        "ema_fast": 30,
+        "ema_slow": 50,
+        "tp_mult": 2.0
+      },
+      "is_metrics": {
+        "num_trades": 129,
+        "win_rate": 0.4574,
+        "profit_factor": 0.8144,
+        "max_drawdown": 0.2892,
+        "sharpe": -1.0653,
+        "expected_value": -15.514,
+        "total_return": -0.2001,
+        "final_equity": 7998.6952
+      },
+      "oos_metrics": {
+        "num_trades": 19,
+        "win_rate": 0.3158,
+        "profit_factor": 0.3257,
+        "max_drawdown": 0.1422,
+        "sharpe": -4.7943,
+        "expected_value": -69.2187,
+        "total_return": -0.1315,
+        "final_equity": 8684.8436
+      }
+    },
+    {
+      "is_period": "2022-04-01:2023-04-01",
+      "oos_period": "2023-04-01:2023-07-01",
+      "params": {
+        "ema_fast": 30,
+        "ema_slow": 50,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 108,
+        "win_rate": 0.3611,
+        "profit_factor": 0.6714,
+        "max_drawdown": 0.335,
+        "sharpe": -1.9516,
+        "expected_value": -28.6332,
+        "total_return": -0.3092,
+        "final_equity": 6907.6173
+      },
+      "oos_metrics": {
+        "num_trades": 29,
+        "win_rate": 0.4138,
+        "profit_factor": 0.619,
+        "max_drawdown": 0.1145,
+        "sharpe": -2.432,
+        "expected_value": -25.6847,
+        "total_return": -0.0745,
+        "final_equity": 9255.1442
+      }
+    },
+    {
+      "is_period": "2022-07-01:2023-07-01",
+      "oos_period": "2023-07-01:2023-10-01",
+      "params": {
+        "ema_fast": 30,
+        "ema_slow": 40,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 122,
+        "win_rate": 0.377,
+        "profit_factor": 0.6354,
+        "max_drawdown": 0.3243,
+        "sharpe": -2.3269,
+        "expected_value": -25.7467,
+        "total_return": -0.3141,
+        "final_equity": 6858.8974
+      },
+      "oos_metrics": {
+        "num_trades": 36,
+        "win_rate": 0.3889,
+        "profit_factor": 0.6164,
+        "max_drawdown": 0.1089,
+        "sharpe": -2.6288,
+        "expected_value": -19.2628,
+        "total_return": -0.0693,
+        "final_equity": 9306.5395
+      }
+    },
+    {
+      "is_period": "2022-10-01:2023-10-01",
+      "oos_period": "2023-10-01:2024-01-01",
+      "params": {
+        "ema_fast": 30,
+        "ema_slow": 40,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 123,
+        "win_rate": 0.374,
+        "profit_factor": 0.5478,
+        "max_drawdown": 0.3623,
+        "sharpe": -3.0373,
+        "expected_value": -25.5709,
+        "total_return": -0.3145,
+        "final_equity": 6854.7833
+      },
+      "oos_metrics": {
+        "num_trades": 24,
+        "win_rate": 0.2083,
+        "profit_factor": 0.1127,
+        "max_drawdown": 0.1947,
+        "sharpe": -10.8825,
+        "expected_value": -81.1057,
+        "total_return": -0.1947,
+        "final_equity": 8053.4624
+      }
+    },
+    {
+      "is_period": "2023-01-01:2024-01-01",
+      "oos_period": "2024-01-01:2024-04-01",
+      "params": {
+        "ema_fast": 10,
+        "ema_slow": 40,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 196,
+        "win_rate": 0.3469,
+        "profit_factor": 0.5363,
+        "max_drawdown": 0.4501,
+        "sharpe": -3.845,
+        "expected_value": -22.4253,
+        "total_return": -0.4395,
+        "final_equity": 5604.6429
+      },
+      "oos_metrics": {
+        "num_trades": 49,
+        "win_rate": 0.2857,
+        "profit_factor": 0.4697,
+        "max_drawdown": 0.2571,
+        "sharpe": -4.8192,
+        "expected_value": -48.1547,
+        "total_return": -0.236,
+        "final_equity": 7640.4214
+      }
+    },
+    {
+      "is_period": "2023-04-01:2024-04-01",
+      "oos_period": "2024-04-01:2024-07-01",
+      "params": {
+        "ema_fast": 10,
+        "ema_slow": 40,
+        "tp_mult": 2.0
+      },
+      "is_metrics": {
+        "num_trades": 199,
+        "win_rate": 0.407,
+        "profit_factor": 0.5239,
+        "max_drawdown": 0.4797,
+        "sharpe": -3.9078,
+        "expected_value": -23.0296,
+        "total_return": -0.4583,
+        "final_equity": 5417.1159
+      },
+      "oos_metrics": {
+        "num_trades": 50,
+        "win_rate": 0.4,
+        "profit_factor": 0.5207,
+        "max_drawdown": 0.1953,
+        "sharpe": -4.2908,
+        "expected_value": -35.6825,
+        "total_return": -0.1784,
+        "final_equity": 8215.8732
+      }
+    },
+    {
+      "is_period": "2023-07-01:2024-07-01",
+      "oos_period": "2024-07-01:2024-10-01",
+      "params": {
+        "ema_fast": 10,
+        "ema_slow": 60,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 163,
+        "win_rate": 0.3497,
+        "profit_factor": 0.5112,
+        "max_drawdown": 0.5017,
+        "sharpe": -3.6894,
+        "expected_value": -29.1987,
+        "total_return": -0.4759,
+        "final_equity": 5240.6045
+      },
+      "oos_metrics": {
+        "num_trades": 33,
+        "win_rate": 0.4848,
+        "profit_factor": 1.0936,
+        "max_drawdown": 0.0503,
+        "sharpe": 0.574,
+        "expected_value": 6.6955,
+        "total_return": 0.0221,
+        "final_equity": 10220.9531
+      }
+    },
+    {
+      "is_period": "2023-10-01:2024-10-01",
+      "oos_period": "2024-10-01:2025-01-01",
+      "params": {
+        "ema_fast": 10,
+        "ema_slow": 60,
+        "tp_mult": 2.5
+      },
+      "is_metrics": {
+        "num_trades": 150,
+        "win_rate": 0.3733,
+        "profit_factor": 0.5798,
+        "max_drawdown": 0.4454,
+        "sharpe": -2.7054,
+        "expected_value": -27.0162,
+        "total_return": -0.4052,
+        "final_equity": 5947.5728
+      },
+      "oos_metrics": {
+        "num_trades": 25,
+        "win_rate": 0.36,
+        "profit_factor": 0.5264,
+        "max_drawdown": 0.127,
+        "sharpe": -3.0505,
+        "expected_value": -44.0878,
+        "total_return": -0.1102,
+        "final_equity": 8897.8043
+      }
+    }
+  ],
+  "combined_oos_period": "2023-01-01:2025-01-01",
+  "combined_oos": {
+    "num_trades": 265,
+    "win_rate": 0.3623,
+    "profit_factor": 0.5317,
+    "max_drawdown": 0.9725,
+    "sharpe": -1.7367,
+    "expected_value": -36.698,
+    "total_return": -0.9725,
+    "final_equity": 275.0418
+  },
+  "stability": {
+    "mean_is_pf": 0.6025,
+    "mean_oos_pf": 0.5355,
+    "oos_pf_stddev": 0.2628,
+    "is_oos_degradation": 0.1112,
+    "fails": [
+      "OOS PF < 1.0 in 7/8 windows (88%)"
+    ],
+    "warns": [],
+    "passed": false
+  },
+  "passed": false
+}
