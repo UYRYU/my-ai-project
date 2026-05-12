@@ -1,0 +1,6 @@
+# OHLCV cache
+data/*.csv
+
+# Python
+__pycache__/
+*.pyc
