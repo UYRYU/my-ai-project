@@ -1,0 +1,268 @@
+{
+  "strategy": "breakout_htf_regime",
+  "symbol": "BTC/USDT",
+  "tf": "1h",
+  "period": "2017-01-01:2020-01-01",
+  "is_months": 12,
+  "oos_months": 3,
+  "step_months": 3,
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "n_windows": 8,
+  "windows": [
+    {
+      "is_period": "2017-01-01:2018-01-01",
+      "oos_period": "2018-01-01:2018-04-01",
+      "params": {
+        "regime_lookback": 200,
+        "regime_threshold": 1.0,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 56,
+        "win_rate": 0.4643,
+        "profit_factor": 3.2482,
+        "max_drawdown": 0.2597,
+        "sharpe": 2.3208,
+        "expected_value": 413.8851,
+        "total_return": 2.3178,
+        "final_equity": 33177.5635
+      },
+      "oos_metrics": {
+        "num_trades": 11,
+        "win_rate": 0.2727,
+        "profit_factor": 0.7366,
+        "max_drawdown": 0.1699,
+        "sharpe": -0.711,
+        "expected_value": -63.9105,
+        "total_return": -0.0703,
+        "final_equity": 9296.9843
+      }
+    },
+    {
+      "is_period": "2017-04-01:2018-04-01",
+      "oos_period": "2018-04-01:2018-07-01",
+      "params": {
+        "regime_lookback": 200,
+        "regime_threshold": 1.0,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 55,
+        "win_rate": 0.4727,
+        "profit_factor": 1.9084,
+        "max_drawdown": 0.1798,
+        "sharpe": 2.1813,
+        "expected_value": 387.2293,
+        "total_return": 2.1298,
+        "final_equity": 31297.6107
+      },
+      "oos_metrics": {
+        "num_trades": 11,
+        "win_rate": 0.3636,
+        "profit_factor": 1.478,
+        "max_drawdown": 0.0378,
+        "sharpe": 1.0309,
+        "expected_value": 56.1421,
+        "total_return": 0.0618,
+        "final_equity": 10617.5632
+      }
+    },
+    {
+      "is_period": "2017-07-01:2018-07-01",
+      "oos_period": "2018-07-01:2018-10-01",
+      "params": {
+        "regime_lookback": 100,
+        "regime_threshold": 0.9,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 85,
+        "win_rate": 0.3294,
+        "profit_factor": 1.3152,
+        "max_drawdown": 0.2777,
+        "sharpe": 1.1869,
+        "expected_value": 90.8591,
+        "total_return": 0.7723,
+        "final_equity": 17723.0222
+      },
+      "oos_metrics": {
+        "num_trades": 18,
+        "win_rate": 0.1667,
+        "profit_factor": 0.2374,
+        "max_drawdown": 0.1574,
+        "sharpe": -5.3417,
+        "expected_value": -84.3565,
+        "total_return": -0.1518,
+        "final_equity": 8481.5833
+      }
+    },
+    {
+      "is_period": "2017-10-01:2018-10-01",
+      "oos_period": "2018-10-01:2019-01-01",
+      "params": {
+        "regime_lookback": 200,
+        "regime_threshold": 1.0,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 59,
+        "win_rate": 0.322,
+        "profit_factor": 1.3696,
+        "max_drawdown": 0.2486,
+        "sharpe": 1.0248,
+        "expected_value": 91.1782,
+        "total_return": 0.538,
+        "final_equity": 15379.5112
+      },
+      "oos_metrics": {
+        "num_trades": 11,
+        "win_rate": 0.2727,
+        "profit_factor": 1.2928,
+        "max_drawdown": 0.1229,
+        "sharpe": 0.7094,
+        "expected_value": 52.9438,
+        "total_return": 0.0582,
+        "final_equity": 10582.3821
+      }
+    },
+    {
+      "is_period": "2018-01-01:2019-01-01",
+      "oos_period": "2019-01-01:2019-04-01",
+      "params": {
+        "regime_lookback": 100,
+        "regime_threshold": 0.9,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 76,
+        "win_rate": 0.2763,
+        "profit_factor": 1.1636,
+        "max_drawdown": 0.2747,
+        "sharpe": 0.6119,
+        "expected_value": 23.931,
+        "total_return": 0.1819,
+        "final_equity": 11818.7553
+      },
+      "oos_metrics": {
+        "num_trades": 11,
+        "win_rate": 0.1818,
+        "profit_factor": 0.9545,
+        "max_drawdown": 0.0441,
+        "sharpe": -0.0134,
+        "expected_value": -3.6729,
+        "total_return": -0.004,
+        "final_equity": 9959.5985
+      }
+    },
+    {
+      "is_period": "2018-04-01:2019-04-01",
+      "oos_period": "2019-04-01:2019-07-01",
+      "params": {
+        "regime_lookback": 100,
+        "regime_threshold": 1.2,
+        "trail_mult": 3.0
+      },
+      "is_metrics": {
+        "num_trades": 37,
+        "win_rate": 0.3243,
+        "profit_factor": 1.501,
+        "max_drawdown": 0.0709,
+        "sharpe": 0.9091,
+        "expected_value": 53.8005,
+        "total_return": 0.1991,
+        "final_equity": 11990.6168
+      },
+      "oos_metrics": {
+        "num_trades": 14,
+        "win_rate": 0.4286,
+        "profit_factor": 0.3298,
+        "max_drawdown": 0.1936,
+        "sharpe": -3.5746,
+        "expected_value": -103.9593,
+        "total_return": -0.1455,
+        "final_equity": 8544.5702
+      }
+    },
+    {
+      "is_period": "2018-07-01:2019-07-01",
+      "oos_period": "2019-07-01:2019-10-01",
+      "params": {
+        "regime_lookback": 100,
+        "regime_threshold": 1.0,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 57,
+        "win_rate": 0.2456,
+        "profit_factor": 1.1927,
+        "max_drawdown": 0.2007,
+        "sharpe": 0.5352,
+        "expected_value": 22.0475,
+        "total_return": 0.1257,
+        "final_equity": 11256.7094
+      },
+      "oos_metrics": {
+        "num_trades": 12,
+        "win_rate": 0.3333,
+        "profit_factor": 1.8951,
+        "max_drawdown": 0.0863,
+        "sharpe": 1.6053,
+        "expected_value": 124.1192,
+        "total_return": 0.1489,
+        "final_equity": 11489.43
+      }
+    },
+    {
+      "is_period": "2018-10-01:2019-10-01",
+      "oos_period": "2019-10-01:2020-01-01",
+      "params": {
+        "regime_lookback": 100,
+        "regime_threshold": 1.0,
+        "trail_mult": 5.0
+      },
+      "is_metrics": {
+        "num_trades": 57,
+        "win_rate": 0.2807,
+        "profit_factor": 1.2292,
+        "max_drawdown": 0.2051,
+        "sharpe": 0.7133,
+        "expected_value": 37.3362,
+        "total_return": 0.2128,
+        "final_equity": 12128.1628
+      },
+      "oos_metrics": {
+        "num_trades": 10,
+        "win_rate": 0.4,
+        "profit_factor": 1.6913,
+        "max_drawdown": 0.0394,
+        "sharpe": 1.2066,
+        "expected_value": 67.045,
+        "total_return": 0.067,
+        "final_equity": 10670.4496
+      }
+    }
+  ],
+  "combined_oos_period": "2018-01-01:2020-01-01",
+  "combined_oos": {
+    "num_trades": 98,
+    "win_rate": 0.2959,
+    "profit_factor": 0.9738,
+    "max_drawdown": 0.3515,
+    "sharpe": 0.094,
+    "expected_value": -3.6473,
+    "total_return": -0.0357,
+    "final_equity": 9642.5613
+  },
+  "stability": {
+    "mean_is_pf": 1.616,
+    "mean_oos_pf": 1.0769,
+    "oos_pf_stddev": 0.5753,
+    "is_oos_degradation": 0.3336,
+    "fails": [],
+    "warns": [],
+    "passed": true
+  },
+  "passed": true
+}

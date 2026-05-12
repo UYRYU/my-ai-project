@@ -1,0 +1,28 @@
+{
+  "strategy": "breakout_htf_regime",
+  "symbol": "ETH/USDT",
+  "tf": "1h",
+  "period": "2017-08-17:2019-12-31",
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "passed": false,
+  "fails": [
+    "勝率 30.67% < 40%",
+    "PF 0.9209 < 1.3",
+    "最大DD 56.33% > 30%",
+    "シャープ 0.0154 < 1.0",
+    "期待値 -10.9787 <= 0.0"
+  ],
+  "warns": [],
+  "num_trades": 163,
+  "win_rate": 0.3067,
+  "profit_factor": 0.9209,
+  "max_drawdown": 0.5633,
+  "sharpe": 0.0154,
+  "expected_value": -10.9787,
+  "total_return": -0.179,
+  "gross_profit": 20829.8968,
+  "gross_loss": 22619.4169,
+  "final_equity": 8210.4798
+}

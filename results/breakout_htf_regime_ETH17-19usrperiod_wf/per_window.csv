@@ -1,0 +1,6 @@
+window,is_start,is_end,oos_start,oos_end,params,is_num_trades,is_win_rate,is_pf,is_sharpe,oos_num_trades,oos_win_rate,oos_pf,oos_sharpe
+1,2017-08-17,2018-08-17,2018-08-17,2018-11-17,"{""regime_lookback"": 400, ""regime_threshold"": 0.9, ""trail_mult"": 5.0}",69,0.3623,1.159,0.6469,10,0.3,0.8856,-0.1461
+2,2017-11-17,2018-11-17,2018-11-17,2019-02-17,"{""regime_lookback"": 400, ""regime_threshold"": 0.9, ""trail_mult"": 5.0}",61,0.3934,1.3193,0.9051,10,0.2,1.0179,0.2126
+3,2018-02-17,2019-02-17,2019-02-17,2019-05-17,"{""regime_lookback"": 400, ""regime_threshold"": 0.9, ""trail_mult"": 5.0}",59,0.3729,1.5884,1.6123,13,0.5385,1.5541,1.1857
+4,2018-05-17,2019-05-17,2019-05-17,2019-08-17,"{""regime_lookback"": 200, ""regime_threshold"": 1.0, ""trail_mult"": 5.0}",58,0.4138,1.7894,1.6722,13,0.3077,0.6362,-1.121
+5,2018-08-17,2019-08-17,2019-08-17,2019-11-17,"{""regime_lookback"": 200, ""regime_threshold"": 1.0, ""trail_mult"": 5.0}",55,0.3636,1.302,0.8929,16,0.1875,0.8345,-0.3254
