@@ -1,0 +1,28 @@
+{
+  "strategy": "breakout_htf_adaptive",
+  "symbol": "BTC/USDT",
+  "tf": "1h",
+  "period": "2021-04-01:2021-07-01",
+  "capital": 10000.0,
+  "fee": 0.001,
+  "slippage": 0.0005,
+  "passed": false,
+  "fails": [
+    "取引数 20 < 100 (失格)",
+    "勝率 30.00% < 40%",
+    "PF 0.8028 < 1.3",
+    "シャープ -0.5956 < 1.0",
+    "期待値 -39.1238 <= 0.0"
+  ],
+  "warns": [],
+  "num_trades": 20,
+  "win_rate": 0.3,
+  "profit_factor": 0.8028,
+  "max_drawdown": 0.1616,
+  "sharpe": -0.5956,
+  "expected_value": -39.1238,
+  "total_return": -0.0782,
+  "gross_profit": 3185.5732,
+  "gross_loss": 3968.0486,
+  "final_equity": 9217.5245
+}

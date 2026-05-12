@@ -1,0 +1,5 @@
+window,is_start,is_end,oos_start,oos_end,params,is_num_trades,is_win_rate,is_pf,is_sharpe,oos_num_trades,oos_win_rate,oos_pf,oos_sharpe
+1,2020-01-01,2021-01-01,2021-01-01,2021-04-01,"{""entry_lookback"": 30, ""trail_mult"": 3.0, ""regime_lookback"": 100}",88,0.3409,1.0392,0.2591,23,0.2174,0.4814,-2.6784
+2,2020-04-01,2021-04-01,2021-04-01,2021-07-01,"{""entry_lookback"": 40, ""trail_mult"": 3.0, ""regime_lookback"": 100}",89,0.3146,0.8023,-0.6518,24,0.1667,0.4472,-2.9244
+3,2020-07-01,2021-07-01,2021-07-01,2021-10-01,"{""entry_lookback"": 40, ""trail_mult"": 3.0, ""regime_lookback"": 100}",99,0.2929,0.7756,-0.9329,20,0.15,0.1428,-9.1409
+4,2020-10-01,2021-10-01,2021-10-01,2022-01-01,"{""entry_lookback"": 40, ""trail_mult"": 5.0, ""regime_lookback"": 100}",96,0.2188,0.6934,-1.1239,18,0.1667,0.8046,-0.3456
