@@ -1,0 +1,26 @@
+[Unit]
+Description=Polymarket sports arbitrage bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/polymarket-bot
+EnvironmentFile=/opt/polymarket-bot/.env
+ExecStart=/opt/polymarket-bot/.venv/bin/python -m src.ws_bot
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/polymarket-bot/stdout.log
+StandardError=append:/var/log/polymarket-bot/stderr.log
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/polymarket-bot /var/log/polymarket-bot
+
+[Install]
+WantedBy=multi-user.target

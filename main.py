@@ -1,4 +1,4 @@
-def greet(name):
-    return f"こんにちは、{name}さん！"
+from src.bot import run
 
-print(greet("竜太郎"))
+if __name__ == "__main__":
+    run()
