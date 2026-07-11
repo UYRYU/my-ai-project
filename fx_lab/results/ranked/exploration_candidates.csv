@@ -1,0 +1,2 @@
+﻿strategy_name,symbol,timeframe,session_filter,pf,winrate,max_dd_pct,trade_count,avg_hold_min,total_pnl,expectancy,payoff_ratio,max_consecutive_losses,rsi_period,oversold,overbought,tp_type,sl_type,has_breakeven,max_bars,has_htf_filter,has_vola_filter,pnl_tokyo,pnl_london,pnl_newyork,trades_tokyo,trades_london,trades_newyork
+rsi_reversal_ecfeeede,EURJPY,M1,london,1.1123,55.33,0.01,300,28.7,5.09,0.017,0.8979,6,18,35,65,atr_mult,atr_mult,False,60,False,True,4.18,0.91,0.0,71,229,0

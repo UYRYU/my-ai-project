@@ -1,0 +1,2 @@
+﻿pf,winrate,max_dd,max_dd_pct,total_pnl,avg_holding_seconds,trade_count,max_consecutive_losses,max_consecutive_wins,expectancy,payoff_ratio,strategy_name,symbol,timeframe,sig_type,category,tp_display,sl_display,session,has_lowvol,has_breakeven,has_trailing,max_bars,avg_hold_min,pnl_tokyo,trades_tokyo,pnl_london,trades_london,pnl_newyork,trades_newyork
+1.012,31.29,10.18,0.01,1.18,1314.0,652,22,4,0.0018,2.2224,wick_reversal_d597b727,GBPJPY,M1,wick_reversal,mean_reversion,ATR×3.0,ATR×1.5,newyork,False,False,False,0,21.9,0.0,0,-2.25,240,3.42,412

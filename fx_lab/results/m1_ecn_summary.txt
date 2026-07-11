@@ -1,0 +1,7 @@
+ECN M1スキャル探索結果
+==================================================
+コスト: spread=0.3pips + commission=0.5pips = 0.8pips/trade
+戦略数: 150
+テスト数: 450
+exploration候補: 0
+strong候補: 0
