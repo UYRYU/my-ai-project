@@ -16,54 +16,50 @@ class FillQuote:
     avg_price: float
     filled_size: float
     levels_used: int
+    limit_price: float | None = None
 
 
-def average_fill_cost(book: dict[str, Any], side: str, target_size: float) -> FillQuote | None:
-    """Walk the book to compute VWAP for a target size on the given side.
-
-    side="asks" → simulating a BUY (consuming asks)
-    side="bids" → simulating a SELL (consuming bids)
-    Returns None if depth is insufficient or book is empty.
-    """
+def average_fill_cost(
+    book: dict[str, Any], side: str, target_size: float
+) -> FillQuote | None:
     levels = book.get(side) or []
     if not levels or target_size <= 0:
         return None
     remaining = target_size
     cost = 0.0
     used = 0
+    limit_price = 0.0
     for lvl in levels:
         try:
             price = float(lvl["price"])
             size = float(lvl["size"])
         except (KeyError, TypeError, ValueError):
             continue
+        if size <= 0:
+            continue
         take = min(remaining, size)
         cost += take * price
         remaining -= take
         used += 1
+        limit_price = price
         if remaining <= 1e-9:
             break
     if remaining > 1e-9:
-        return None  # not enough depth
+        return None
     token_id = str(book.get("asset_id") or book.get("token_id") or "")
     return FillQuote(
         token_id=token_id,
         avg_price=cost / target_size,
         filled_size=target_size,
         levels_used=used,
+        limit_price=limit_price,
     )
 
 
 def quote_basket_cost(
     clob_host: str, leg_token_ids: list[str], target_payout_usd: float
 ) -> tuple[float, list[FillQuote]] | None:
-    """For a single-market arb basket (buy ALL outcomes), compute total cost
-    to receive `target_payout_usd` from the one winning leg.
-
-    Each leg pays $1/share on the winning outcome. Target shares per leg =
-    target_payout_usd. Returns (total_cost, [quotes]) or None if any leg
-    lacks depth.
-    """
+    """Compute the executable cost of buying the same share count on all legs."""
     quotes: list[FillQuote] = []
     total_cost = 0.0
     for token_id in leg_token_ids:
