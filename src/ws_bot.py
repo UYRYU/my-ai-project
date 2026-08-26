@@ -27,6 +27,7 @@ from .risk import DailyCounters
 
 DISCOVERY_EVERY_SECONDS = 30.0
 TRADING_TICK_SECONDS = 0.1
+MAX_BOOK_AGE_SECONDS = 5.0
 
 
 async def _discovery_loop(cfg: Config, state: dict) -> None:
@@ -87,7 +88,7 @@ def _try_arb_from_cache(
     quotes: list[orderbook.FillQuote] = []
     total_cost = 0.0
     for o in market.outcomes:
-        book = cache.get(o.token_id)
+        book = cache.get(o.token_id, max_age_seconds=MAX_BOOK_AGE_SECONDS)
         if book is None:
             return None
         q = orderbook.average_fill_cost(book, "asks", target_payout_usd)

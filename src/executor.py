@@ -1,17 +1,9 @@
-"""Execution layer. Defaults to dry-run.
-
-Atomic basket semantics: we place all legs, and if ANY leg fails to
-fully fill within a tight window, we unwind the filled legs (sell back
-at best-bid) so we never end up with directional exposure.
-
-Real live execution requires py-clob-client with a funded Polygon
-wallet. Dry-run mocks the fills so the paper PnL mirrors what live
-would produce.
-"""
+"""Execution layer. Defaults to dry-run."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from . import trade_log
 from .arbitrage import Opportunity
 from .config import Config
@@ -32,12 +24,43 @@ class LegResult:
         return self.error is None and self.filled_size >= self.requested_size - 1e-6
 
 
-def _size_for_leg(target_payout_usd: float) -> float:
-    """Each winning share pays $1. Size = target payout in $.
+@dataclass(frozen=True)
+class ExecutionLeg:
+    token_id: str
+    limit_price: float
+    size: float
+    expected_price: float
 
-    Note: sized so the WINNING leg pays target_payout_usd. Cost is less.
-    """
+
+def _size_for_leg(target_payout_usd: float) -> float:
+    """Each outcome must use the same share count to preserve the hedge."""
     return round(target_payout_usd, 4)
+
+
+def _build_execution_legs(
+    opp: Opportunity,
+    cfg: Config,
+    quotes: list[FillQuote] | None,
+) -> list[ExecutionLeg]:
+    if quotes:
+        target_size = _size_for_leg(min(q.filled_size for q in quotes))
+        if target_size <= 0:
+            raise ValueError("quotes must contain positive fill sizes")
+        return [
+            ExecutionLeg(
+                token_id=q.token_id,
+                limit_price=q.limit_price or q.avg_price,
+                size=target_size,
+                expected_price=q.avg_price,
+            )
+            for q in quotes
+        ]
+
+    target_size = _size_for_leg(cfg.max_position_usd)
+    return [
+        ExecutionLeg(token_id, price, target_size, price)
+        for token_id, price in opp.legs
+    ]
 
 
 def execute(
@@ -46,14 +69,8 @@ def execute(
     book: Book,
     quotes: list[FillQuote] | None = None,
 ) -> None:
-    """Place orders for an arbitrage basket with atomic semantics.
-
-    Dry-run: mock the fills into the paper book.
-    Live: place IOC orders, unwind if any leg is short-filled.
-    """
-    legs = list(zip([t for t, _ in opp.legs], [p for _, p in opp.legs]))
-    if quotes is not None:
-        legs = [(q.token_id, q.avg_price) for q in quotes]
+    """Place equal-share orders for every outcome in an arbitrage basket."""
+    legs = _build_execution_legs(opp, cfg, quotes)
 
     trade_log.write(
         "opportunity",
@@ -61,29 +78,36 @@ def execute(
         edge=opp.edge,
         question=opp.market.question,
         slug=opp.market.slug,
-        legs=legs,
+        legs=[{
+            "token_id": leg.token_id,
+            "size": leg.size,
+            "limit_price": leg.limit_price,
+            "expected_price": leg.expected_price,
+        } for leg in legs],
         dry_run=cfg.dry_run,
     )
 
     if cfg.dry_run:
-        _dry_run_fill(legs, cfg, book)
+        _dry_run_fill(legs, book)
         return
 
     results = _live_place(legs, cfg, book)
     _maybe_unwind(results, cfg, book)
 
 
-def _dry_run_fill(legs: list[tuple[str, float]], cfg: Config, book: Book) -> None:
-    per_leg_usd = cfg.max_position_usd / max(len(legs), 1)
-    print(f"[DRY] basket cost ~${sum(p for _, p in legs) * (per_leg_usd / max(legs[0][1], 0.01)):.2f}")
-    for token_id, price in legs:
-        shares = round(per_leg_usd / max(price, 0.01), 4)
-        print(f"  leg token={token_id[:10]}... price={price:.4f} size={shares}")
-        book.record_fill(token_id, shares, price)
+def _dry_run_fill(legs: list[ExecutionLeg], book: Book) -> None:
+    basket_cost = sum(leg.expected_price * leg.size for leg in legs)
+    print(f"[DRY] basket cost ~${basket_cost:.2f}")
+    for leg in legs:
+        print(
+            f"  leg token={leg.token_id[:10]}... price={leg.expected_price:.4f} "
+            f"size={leg.size}"
+        )
+        book.record_fill(leg.token_id, leg.size, leg.expected_price)
 
 
 def _live_place(
-    legs: list[tuple[str, float]], cfg: Config, book: Book
+    legs: list[ExecutionLeg], cfg: Config, book: Book
 ) -> list[LegResult]:
     from py_clob_client.client import ClobClient
     from py_clob_client.clob_types import OrderArgs, OrderType
@@ -106,33 +130,46 @@ def _live_place(
     else:
         client.set_api_creds(client.create_or_derive_api_creds())
 
-    per_leg_usd = cfg.max_position_usd / max(len(legs), 1)
     results: list[LegResult] = []
-
-    for token_id, price in legs:
-        size = round(per_leg_usd / max(price, 0.01), 4)
+    for leg in legs:
         try:
-            order_args = OrderArgs(price=price, size=size, side=BUY, token_id=token_id)
+            order_args = OrderArgs(
+                price=leg.limit_price,
+                size=leg.size,
+                side=BUY,
+                token_id=leg.token_id,
+            )
             signed = client.create_order(order_args)
-            resp = client.post_order(signed, OrderType.FOK)  # fill-or-kill
-            filled_size = float(resp.get("takingAmount", 0.0)) if isinstance(resp, dict) else 0.0
-            avg = float(resp.get("makingAmount", 0.0)) / filled_size if filled_size > 0 else price
-            results.append(LegResult(token_id, size, filled_size, avg))
+            resp = client.post_order(signed, OrderType.FOK)
+            filled_size = (
+                float(resp.get("takingAmount", 0.0))
+                if isinstance(resp, dict)
+                else 0.0
+            )
+            avg = (
+                float(resp.get("makingAmount", 0.0)) / filled_size
+                if filled_size > 0
+                else leg.expected_price
+            )
+            results.append(LegResult(leg.token_id, leg.size, filled_size, avg))
             if filled_size > 0:
-                book.record_fill(token_id, filled_size, avg)
-            trade_log.write("fill", token_id=token_id, req=size, got=filled_size, price=avg)
+                book.record_fill(leg.token_id, filled_size, avg)
+            trade_log.write(
+                "fill",
+                token_id=leg.token_id,
+                req=leg.size,
+                got=filled_size,
+                price=avg,
+            )
         except Exception as e:
-            results.append(LegResult(token_id, size, 0.0, price, error=str(e)))
-            trade_log.write("fill_error", token_id=token_id, err=str(e))
+            results.append(
+                LegResult(leg.token_id, leg.size, 0.0, leg.expected_price, error=str(e))
+            )
+            trade_log.write("fill_error", token_id=leg.token_id, err=str(e))
     return results
 
 
 def _maybe_unwind(results: list[LegResult], cfg: Config, book: Book) -> None:
-    """If any leg didn't fully fill, sell back the filled legs at market.
-
-    Partial fill = directional exposure. Unwinding at a small loss is
-    better than holding a one-sided basket.
-    """
     if all(r.filled_fully for r in results):
         return
 
@@ -160,17 +197,18 @@ def _maybe_unwind(results: list[LegResult], cfg: Config, book: Book) -> None:
     for r in results:
         if r.filled_size <= 0:
             continue
-        # Accept whatever the top bid is right now — we want out
         try:
             order_args = OrderArgs(
-                price=max(r.avg_price - 0.02, 0.01),  # aggressive sell
+                price=max(r.avg_price - 0.02, 0.01),
                 size=r.filled_size,
                 side=SELL,
                 token_id=r.token_id,
             )
             signed = client.create_order(order_args)
             resp = client.post_order(signed, OrderType.FOK)
-            trade_log.write("unwind", token_id=r.token_id, size=r.filled_size, resp=str(resp))
+            trade_log.write(
+                "unwind", token_id=r.token_id, size=r.filled_size, resp=str(resp)
+            )
             print(f"[UNWIND] token={r.token_id[:10]}... size={r.filled_size}")
         except Exception as e:
             trade_log.write("unwind_error", token_id=r.token_id, err=str(e))
